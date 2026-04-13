@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import packageMetadata from '../package.json';
 import { Brief, Asset, Shot, Project, ProjectType, ModelSourceId, PromptLanguage, AspectRatio } from './types';
 import type { SeedanceDraft, SeedanceOverlayTemplateId } from './features/seedance/types.ts';
 import { generateBriefWithModel } from './services/modelService';
@@ -13,8 +14,10 @@ import { useSeedanceRuntime } from './features/fastVideoFlow/hooks/useSeedanceRu
 import { FAST_FLOW_TEMPLATE_IDS, SEEDANCE_TEMPLATE_REGISTRY } from './features/seedance/config/seedanceTemplateRegistry.ts';
 import { StudioMetricCard, StudioPage, StudioPageHeader, StudioPanel, StudioSelect } from './components/studio/StudioPrimitives.tsx';
 import {
+  AppChromeBar,
   ProjectDetailHeader,
   StudioSidebar,
+  getWorkspaceSurfaceMeta,
   type WorkspaceCreateProjectDraft,
   type WorkspaceHomeViewMode,
   type WorkspaceThemeMode,
@@ -124,7 +127,7 @@ export default function App() {
   });
   const [useMockMode, setUseMockMode] = useState(false);
   const [view, setView] = useState<View>('home');
-  const { themeMode, setThemeMode } = useThemeModeStorage('dark');
+  const { themeMode, setThemeMode, isThemeModeLoaded } = useThemeModeStorage('dark');
   const { apiSettings, setApiSettings } = useApiSettingsStorage();
   const { modelInvocationLogs } = useModelInvocationLogs();
   const [idea, setIdea] = useState('');
@@ -156,6 +159,7 @@ export default function App() {
   const [isSubmittingFastVideo, setIsSubmittingFastVideo] = useState(false);
   const [isRefreshingFastVideoTask, setIsRefreshingFastVideoTask] = useState(false);
   const [isCancellingFastVideoTask, setIsCancellingFastVideoTask] = useState(false);
+  const [appVersion, setAppVersion] = useState(packageMetadata.version);
   const isRefreshingFastVideoTaskRef = useRef(false);
 
   const openSeedanceErrorModal = (config: {
@@ -525,6 +529,36 @@ export default function App() {
     ? <StartupSplash onEnter={handleEnterStartupSplash} />
     : null;
 
+  useEffect(() => {
+    if (!isThemeModeLoaded || typeof window === 'undefined' || !window.electronAPI?.isElectron) {
+      return;
+    }
+
+    void window.electronAPI.setWindowAppearance(themeMode).catch((error) => {
+      console.error('Failed to sync Electron window appearance', error);
+    });
+  }, [isThemeModeLoaded, themeMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.electronAPI?.isElectron) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void window.electronAPI.getAppVersion().then((version) => {
+      if (!cancelled && version) {
+        setAppVersion(version);
+      }
+    }).catch((error) => {
+      console.error('Failed to load app version', error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   if (hasKey === null) {
     return (
       <>
@@ -728,56 +762,62 @@ export default function App() {
   });
 
   const { draftIssues } = getFastVideoDraftState(project);
+  const currentSurfaceMeta = getWorkspaceSurfaceMeta(view, project);
 
   return (
-    <div className={`theme-${themeMode} app-shell flex h-screen text-zinc-100 font-sans overflow-hidden`}>
+    <div className={`theme-${themeMode} app-shell flex h-screen flex-col text-zinc-100 font-sans overflow-hidden`}>
       <div className="studio-backdrop">
         <div className="studio-orb studio-orb-1" />
         <div className="studio-orb studio-orb-2" />
         <div className="studio-orb studio-orb-3" />
       </div>
-      <StudioSidebar
-        view={view}
-        projectCount={projects.length}
-        mediaCount={projectMediaCounts.total}
-        themeMode={themeMode}
-        useMockMode={useMockMode}
-        onNavigate={handleNavigatePrimaryView}
-        onThemeModeChange={setThemeMode}
-        onUseMockModeChange={setUseMockMode}
-        onOpenApiConfig={() => setView('apiConfig')}
-      />
-      <main className="app-main flex-1 overflow-y-auto">
-        <div className="px-4 sm:px-6 xl:px-8">
-          {isProjectDetailView(view) ? (
-            <div className="w-full pt-6">
-              <ProjectDetailHeader
-                project={project}
-                activeView={view}
-                onGoHome={handleBackToHome}
-                onSelectView={setView}
-                onProjectNameChange={handleProjectNameChange}
-                onProjectGroupNameChange={handleProjectGroupNameChange}
-                pageActions={(
-                  <ProjectDetailPageActions
-                    view={view}
-                    project={project}
-                    draftIssueCount={draftIssues.length}
-                    isGeneratingFastPlan={isGeneratingFastPlan}
-                    isSubmittingFastVideo={isSubmittingFastVideo}
-                    isRefreshingFastVideoTask={isRefreshingFastVideoTask}
-                    isCancellingFastVideoTask={isCancellingFastVideoTask}
-                    onGenerateFastPlan={() => void handleGenerateFastPlan()}
-                    onGoFastVideo={() => setView('fastVideo')}
-                    onSkipFastStoryboard={handleSkipFastStoryboard}
-                    onSubmitFastVideo={() => void handleSubmitFastVideo()}
-                    onCancelFastVideoTask={() => void handleCancelFastVideoTask()}
-                  />
-                )}
-              />
-            </div>
-          ) : null}
-          <AnimatePresence mode="wait">
+      <AppChromeBar version={`v${appVersion}`} />
+      <div className="app-workspace">
+        <StudioSidebar
+          view={view}
+          projectCount={projects.length}
+          mediaCount={projectMediaCounts.total}
+          themeMode={themeMode}
+          useMockMode={useMockMode}
+          onNavigate={handleNavigatePrimaryView}
+          onThemeModeChange={setThemeMode}
+          onUseMockModeChange={setUseMockMode}
+          onOpenApiConfig={() => setView('apiConfig')}
+        />
+        <main className="app-main flex-1 overflow-y-auto">
+          <div className="px-4 sm:px-6 xl:px-8">
+            {isProjectDetailView(view) ? (
+              <div className="w-full pt-6">
+                <ProjectDetailHeader
+                  project={project}
+                  activeView={view}
+                  onGoHome={handleBackToHome}
+                  onSelectView={setView}
+                  onProjectNameChange={handleProjectNameChange}
+                  onProjectGroupNameChange={handleProjectGroupNameChange}
+                  pageEyebrow={currentSurfaceMeta.eyebrow}
+                  pageTitle={currentSurfaceMeta.title}
+                  pageDescription={currentSurfaceMeta.description}
+                  pageActions={(
+                    <ProjectDetailPageActions
+                      view={view}
+                      project={project}
+                      draftIssueCount={draftIssues.length}
+                      isGeneratingFastPlan={isGeneratingFastPlan}
+                      isSubmittingFastVideo={isSubmittingFastVideo}
+                      isRefreshingFastVideoTask={isRefreshingFastVideoTask}
+                      isCancellingFastVideoTask={isCancellingFastVideoTask}
+                      onGenerateFastPlan={() => void handleGenerateFastPlan()}
+                      onGoFastVideo={() => setView('fastVideo')}
+                      onSkipFastStoryboard={handleSkipFastStoryboard}
+                      onSubmitFastVideo={() => void handleSubmitFastVideo()}
+                      onCancelFastVideoTask={() => void handleCancelFastVideoTask()}
+                    />
+                  )}
+                />
+              </div>
+            ) : null}
+            <AnimatePresence mode="wait">
             <ProjectOverviewWorkspace
               view={view}
               themeMode={themeMode}
@@ -970,9 +1010,10 @@ export default function App() {
               onToggleReferenceSelection={handleToggleFastReferenceSelection}
               onToggleSceneSelection={handleToggleFastSceneSelection}
             />
-          </AnimatePresence>
-        </div>
-      </main>
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
 
       <ImagePreviewModal
         previewImage={previewImage}

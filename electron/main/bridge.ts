@@ -201,12 +201,18 @@ export async function startBridge(port = 3210) {
 
   async function saveBridgeConfig(config) {
     await ensureDir(persistentDataRoot)
-    await writeFile(bridgeConfigPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+    const currentConfig = await loadBridgeConfig()
+    await writeFile(bridgeConfigPath, `${JSON.stringify({ ...currentConfig, ...config }, null, 2)}\n`, 'utf8')
   }
 
   function normalizeAssetLibraryRoot(path) {
     const trimmed = String(path || '').trim()
     return trimmed ? resolve(trimmed) : defaultAssetLibraryRoot
+  }
+
+  function normalizePortraitLibraryRoot(path) {
+    const trimmed = String(path || '').trim()
+    return trimmed ? resolve(trimmed) : ''
   }
 
   function sanitizePathSegment(value, fallback = 'untitled') {
@@ -351,6 +357,19 @@ export async function startBridge(port = 3210) {
     return { safeRelativePath, absolutePath }
   }
 
+  function resolvePortraitLibraryAbsolutePath(rootPath, relativePath) {
+    if (!rootPath) {
+      throw new Error('尚未配置图片素材文件夹。')
+    }
+    const safeRelativePath = sanitizeRelativePath(relativePath)
+    const absolutePath = resolve(rootPath, ...safeRelativePath.split('/'))
+    const normalizedRoot = rootPath.endsWith(sep) ? rootPath : `${rootPath}${sep}`
+    if (absolutePath !== rootPath && !absolutePath.startsWith(normalizedRoot)) {
+      throw new Error('人像素材文件路径越界。')
+    }
+    return { safeRelativePath, absolutePath }
+  }
+
   async function getAssetLibraryConfig() {
     await ensureDir(persistentDataRoot)
     const config = await loadBridgeConfig()
@@ -370,6 +389,31 @@ export async function startBridge(port = 3210) {
     }
     await saveBridgeConfig({ assetLibraryRootPath: nextRootPath === defaultAssetLibraryRoot ? '' : nextRootPath })
     return getAssetLibraryConfig()
+  }
+
+  async function getPortraitLibraryConfig() {
+    await ensureDir(persistentDataRoot)
+    const config = await loadBridgeConfig()
+    const rootPath = normalizePortraitLibraryRoot(config.portraitLibraryRootPath)
+    return {
+      rootPath,
+      configured: Boolean(rootPath)
+    }
+  }
+
+  async function updatePortraitLibraryConfig(rootPathInput) {
+    const nextRootPath = normalizePortraitLibraryRoot(rootPathInput)
+    if (nextRootPath) {
+      const directoryStat = await stat(nextRootPath).catch(() => null)
+      if (!directoryStat) {
+        throw new Error('所选图片素材文件夹不存在。')
+      }
+      if (!directoryStat.isDirectory()) {
+        throw new Error('所选路径不是文件夹。')
+      }
+    }
+    await saveBridgeConfig({ portraitLibraryRootPath: nextRootPath })
+    return getPortraitLibraryConfig()
   }
 
   function buildAssetLibraryRelativePath(body, mimeType) {
@@ -482,6 +526,36 @@ export async function startBridge(port = 3210) {
       const relativePath = String(request.query.path || '').trim()
       const { rootPath } = await getAssetLibraryConfig()
       const { absolutePath } = resolveAssetLibraryAbsolutePath(rootPath, relativePath)
+      const fileBuffer = await readFile(absolutePath)
+      const fileName = basename(absolutePath)
+      response.setHeader('Content-Type', detectContentType(fileName))
+      response.send(fileBuffer)
+    } catch (error) {
+      response.status(404).json({ error: normalizeErrorMessage(error) })
+    }
+  })
+
+  app.get('/api/seedance/portraits/config', async (_request, response) => {
+    try {
+      response.json(await getPortraitLibraryConfig())
+    } catch (error) {
+      response.status(500).json({ error: normalizeErrorMessage(error) })
+    }
+  })
+
+  app.post('/api/seedance/portraits/config', async (request, response) => {
+    try {
+      response.json(await updatePortraitLibraryConfig(request.body?.rootPath))
+    } catch (error) {
+      response.status(500).json({ error: normalizeErrorMessage(error) })
+    }
+  })
+
+  app.get('/api/seedance/portraits/file', async (request, response) => {
+    try {
+      const relativePath = String(request.query.path || '').trim()
+      const { rootPath } = await getPortraitLibraryConfig()
+      const { absolutePath } = resolvePortraitLibraryAbsolutePath(rootPath, relativePath)
       const fileBuffer = await readFile(absolutePath)
       const fileName = basename(absolutePath)
       response.setHeader('Content-Type', detectContentType(fileName))
@@ -662,7 +736,7 @@ export async function startBridge(port = 3210) {
 
   await ensureDir(bridgeRoot)
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, () => {
+    const server = app.listen(port, '127.0.0.1', () => {
       console.log(`Seedance bridge (Electron) listening on http://127.0.0.1:${port}`)
       resolve({
         port,

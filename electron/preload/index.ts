@@ -6,7 +6,10 @@ const api = {
   isElectron: true,
   platform: process.platform,
   getBridgeUrl: () => ipcRenderer.invoke('bridge:getUrl'),
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+  setWindowAppearance: (themeMode: 'light' | 'dark') => ipcRenderer.invoke('window:setAppearance', themeMode),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  selectDirectory: (options?: { title?: string; defaultPath?: string }) => ipcRenderer.invoke('dialog:selectDirectory', options),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

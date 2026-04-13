@@ -1,20 +1,68 @@
-import { app, BrowserWindow, shell, ipcMain, nativeImage } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, nativeImage, dialog } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startBridge } from './bridge'
 
 let bridgeServer: any = null
+let mainWindow: BrowserWindow | null = null
 
 const iconPath = join(__dirname, '../../public/assets/tapdance_logo.png')
+const WINDOW_TITLE_BAR_HEIGHT = 56
+
+type WindowAppearanceMode = 'light' | 'dark'
+
+const WINDOW_APPEARANCE: Record<WindowAppearanceMode, {
+  backgroundColor: string
+  titleBarColor: string
+  symbolColor: string
+}> = {
+  dark: {
+    backgroundColor: '#050b16',
+    titleBarColor: '#091221',
+    symbolColor: '#f8fbff'
+  },
+  light: {
+    backgroundColor: '#f6f1e8',
+    titleBarColor: '#fff8ef',
+    symbolColor: '#1a2433'
+  }
+}
+
+function applyWindowAppearance(window: BrowserWindow, mode: WindowAppearanceMode): void {
+  const appearance = WINDOW_APPEARANCE[mode]
+
+  window.setBackgroundColor(appearance.backgroundColor)
+
+  if (process.platform !== 'darwin') {
+    window.setTitleBarOverlay({
+      color: appearance.titleBarColor,
+      symbolColor: appearance.symbolColor,
+      height: WINDOW_TITLE_BAR_HEIGHT
+    })
+  }
+}
 
 async function createWindow(): Promise<void> {
+  const defaultAppearance = WINDOW_APPEARANCE.dark
+
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     show: false,
     autoHideMenuBar: true,
     title: 'Tapdance - AI导演工作台',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    backgroundColor: defaultAppearance.backgroundColor,
+    ...(process.platform !== 'darwin'
+      ? {
+        titleBarOverlay: {
+          color: defaultAppearance.titleBarColor,
+          symbolColor: defaultAppearance.symbolColor,
+          height: WINDOW_TITLE_BAR_HEIGHT
+        }
+      }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -24,8 +72,14 @@ async function createWindow(): Promise<void> {
     icon: nativeImage.createFromPath(iconPath)
   })
 
+  applyWindowAppearance(mainWindow, 'dark')
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -81,8 +135,35 @@ app.whenReady().then(async () => {
     return `http://127.0.0.1:${bridgeServer?.port || 3210}/api/seedance`
   })
 
+  ipcMain.handle('app:getVersion', () => {
+    return app.getVersion()
+  })
+
+  ipcMain.handle('window:setAppearance', (_, mode: WindowAppearanceMode) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return false
+    }
+
+    applyWindowAppearance(mainWindow, mode === 'light' ? 'light' : 'dark')
+    return true
+  })
+
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
     await shell.openExternal(url)
+  })
+
+  ipcMain.handle('dialog:selectDirectory', async (_, options?: { title?: string; defaultPath?: string }) => {
+    const result = await dialog.showOpenDialog({
+      title: options?.title || '选择文件夹',
+      defaultPath: options?.defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    })
+
+    if (result.canceled) {
+      return ''
+    }
+
+    return result.filePaths[0] || ''
   })
 
   createWindow()
