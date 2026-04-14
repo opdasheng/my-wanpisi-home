@@ -85,6 +85,14 @@ import {
   getSourceProviderKey,
   getVolcengineRoleModelOptions,
 } from './features/modelSelection/utils/modelSelection.ts';
+import {if (typeof window !== 'undefined') {
+  (window as any).electronAPI = (window as any).electronAPI || {
+    isElectron: false,
+    getAppVersion: () => Promise.resolve('1.0.0-web'),
+    setWindowAppearance: () => Promise.resolve(),
+    getBridgeUrl: () => Promise.resolve(''),
+  };
+}
 
 type View = WorkspaceView;
 type ThemeMode = WorkspaceThemeMode;
@@ -474,29 +482,18 @@ export default function App() {
     onRefreshTask: handleRefreshFastVideoTask,
   });
 
-  useEffect(() => {
-    const checkKey = async () => {
-      // In Electron, we assume the user might have provided a key in config or env
-      // but we still let the UI decide if it wants to show the block.
-      // For now, if it's Electron, we can be more lenient or check local storage.
-      if (typeof window !== 'undefined' && (window as any).electronAPI?.isElectron) {
-        setHasKey(true);
-        return;
-      }
-      
-      try {
-        if ((window as any).aistudio && (window as any).aistudio.hasSelectedApiKey) {
-          const has = await (window as any).aistudio.hasSelectedApiKey();
-          setHasKey(has);
-        } else {
-          setHasKey(true); // Fallback if not in AI Studio
-        }
-      } catch (e) {
-        setHasKey(true);
-      }
-    };
-    checkKey();
+useEffect(() => {
+    // 强制跳过所有 Key 检测，确保 OneFlow 直接进入工作台
+    setHasKey(true);
   }, []);
+
+  useEffect(() => {
+  const checkKey = async () => {
+    // 强行设为 true，让网页版直接进入
+    setHasKey(true); 
+  };
+  checkKey();
+}, []);
 
   useEffect(() => {
     if (!['apiConfig', 'fastInput', 'fastStoryboard', 'fastVideo'].includes(view)) {
@@ -552,26 +549,6 @@ export default function App() {
       console.error('Failed to sync Electron window appearance', error);
     });
   }, [isThemeModeLoaded, themeMode]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.electronAPI?.isElectron) {
-      return;
-    }
-
-    let cancelled = false;
-
-    void window.electronAPI.getAppVersion().then((version) => {
-      if (!cancelled && version) {
-        setAppVersion(version);
-      }
-    }).catch((error) => {
-      console.error('Failed to load app version', error);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (hasKey === null) {
     return (
