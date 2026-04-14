@@ -10,6 +10,7 @@ export type FlowModelCategory = 'text' | 'image' | 'video';
 export type ModelProviderId = 'gemini' | 'volcengine';
 export type BillingType = 'per_image' | 'per_million_tokens';
 export type BillingCurrency = 'CNY' | 'USD';
+
 export interface ModelPricingConfig {
   type: BillingType;
   unitPriceCny?: number;
@@ -199,6 +200,7 @@ export const DEFAULT_MODEL_ROLE_META: Record<ModelRole, { title: string; descrip
   image: { title: '生图模型', description: '用于资产图、首帧和尾帧生成' },
   video: { title: '视频模型', description: '用于镜头视频和转场视频生成' },
 };
+
 let cachedApiSettings: ApiSettings = defaultApiSettings;
 
 function trimTrailingZeros(value: string) {
@@ -225,9 +227,7 @@ export function getProviderModelCatalog(providerId: ModelProviderId, role: Model
 }
 
 function readModelSource(settings: ApiSettings, sourceId: ModelSourceId): string {
-  if (!sourceId) {
-    return '';
-  }
+  if (!sourceId) return '';
   const [provider, field] = sourceId.split('.') as ['gemini' | 'volcengine', keyof ApiSettings['gemini']];
   const config = settings[provider] as unknown as Record<string, string>;
   return (config[field] || '').trim();
@@ -243,9 +243,7 @@ export function getModelRoleFromSourceId(sourceId: Exclude<ModelSourceId, ''>): 
 
 export function findConfiguredModel(providerId: ModelProviderId, role: ModelRole, modelId: string): ConfiguredModelCatalogItem | undefined {
   const normalized = modelId.trim();
-  if (!normalized) {
-    return undefined;
-  }
+  if (!normalized) return undefined;
   return getProviderCatalog(providerId).models[role].find((item) => {
     const aliases = item.aliases ? [...item.aliases] : [];
     return item.modelId === normalized || aliases.includes(normalized);
@@ -253,20 +251,205 @@ export function findConfiguredModel(providerId: ModelProviderId, role: ModelRole
 }
 
 function normalizePriceValue(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined;
-  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return value;
 }
 
 function resolveModelPricing(rule?: ModelPricingConfig): ModelBillingRule | undefined {
-  if (!rule || (rule.type !== 'per_image' && rule.type !== 'per_million_tokens')) {
-    return undefined;
-  }
+  if (!rule || (rule.type !== 'per_image' && rule.type !== 'per_million_tokens')) return undefined;
   const cnyPrice = normalizePriceValue(rule.unitPriceCny);
-  if (cnyPrice !== undefined) {
-    return { type: rule.type, currency: 'CNY', unitPrice: cnyPrice };
-  }
+  if (cnyPrice !== undefined) return { type: rule.type, currency: 'CNY', unitPrice: cnyPrice };
   const usdPriceFromNewField = normalizePriceValue(rule.unitPriceUsd);
-  if (usdPriceFromNewField !== undefined) {
-    return { type: rule.type, currency: 'CNY', unitPrice: usdPriceFromNew
+  if (usdPriceFromNewField !== undefined) return { type: rule.type, currency: 'CNY', unitPrice: usdPriceFromNewField * USD_TO_CNY_RATE };
+  const legacyPrice = normalizePriceValue(rule.unitPrice);
+  if (legacyPrice === undefined) return undefined;
+  if (rule.currency === 'USD') return { type: rule.type, currency: 'CNY', unitPrice: legacyPrice * USD_TO_CNY_RATE };
+  if (rule.currency === 'CNY') return { type: rule.type, currency: 'CNY', unitPrice: legacyPrice };
+  return undefined;
+}
+
+export function getModelBillingRule(providerId: ModelProviderId, role: ModelRole, modelId: string): ModelBillingRule | undefined {
+  return resolveModelPricing(findConfiguredModel(providerId, role, modelId)?.pricing);
+}
+
+export function formatConfiguredModelDisplay(providerId: ModelProviderId, role: ModelRole, modelId: string): string {
+  const normalized = modelId.trim();
+  if (!normalized) return '';
+  const matched = findConfiguredModel(providerId, role, normalized);
+  if (!matched) return normalized;
+  return `${matched.name} (${matched.modelId})`;
+}
+
+export function formatModelPricing(rule?: ModelBillingRule, compact = false): string {
+  if (!rule) return '';
+  const suffix = rule.type === 'per_image' ? '张' : '百万tokens';
+  const separator = compact ? '/' : ' / ';
+  return `${formatMoney(rule.unitPrice, rule.currency)}${separator}${suffix}`;
+}
+
+export function getModelPricingLabel(providerId: ModelProviderId, role: ModelRole, modelId: string, compact = false): string {
+  return formatModelPricing(getModelBillingRule(providerId, role, modelId), compact);
+}
+
+export function getPricedModelEntries(): Array<{ providerId: ModelProviderId; role: ModelRole; name: string; modelId: string; priceLabel: string }> {
+  const items: Array<{ providerId: ModelProviderId; role: ModelRole; name: string; modelId: string; priceLabel: string }> = [];
+  (Object.keys(MODEL_PROVIDER_CATALOG) as ModelProviderId[]).forEach((providerId) => {
+    (Object.keys(getProviderCatalog(providerId).models) as ModelRole[]).forEach((role) => {
+      getProviderCatalog(providerId).models[role].forEach((item) => {
+        const priceLabel = formatModelPricing(resolveModelPricing(item.pricing));
+        if (!priceLabel) return;
+        items.push({ providerId, role, name: item.name, modelId: item.modelId, priceLabel });
+      });
+    });
+  });
+  return items;
+}
+
+function normalizeVolcengineModelValue(role: ModelRole, endpointId: string): string {
+  const matched = findConfiguredModel('volcengine', role, endpointId);
+  return matched?.modelId || endpointId.trim();
+}
+
+function normalizeApiSettings(settings: ApiSettings): ApiSettings {
+  const geminiLanguageCatalog = getProviderPromptLanguageCatalog('gemini');
+  const volcengineLanguageCatalog = getProviderPromptLanguageCatalog('volcengine');
+  const normalizedGeminiPromptLanguage = geminiLanguageCatalog.supported.includes(settings.gemini.promptLanguage)
+    ? settings.gemini.promptLanguage
+    : geminiLanguageCatalog.default;
+  const normalizedVolcenginePromptLanguage = volcengineLanguageCatalog.supported.includes(settings.volcengine.promptLanguage)
+    ? settings.volcengine.promptLanguage
+    : volcengineLanguageCatalog.default;
+
+  return {
+    ...settings,
+    gemini: {
+      ...settings.gemini,
+      promptLanguage: normalizedGeminiPromptLanguage,
+    },
+    volcengine: {
+      ...settings.volcengine,
+      enabled: true,
+      promptLanguage: normalizedVolcenginePromptLanguage,
+      textModel: normalizeVolcengineModelValue('text', settings.volcengine.textModel),
+      imageModel: normalizeVolcengineModelValue('image', settings.volcengine.imageModel),
+      videoModel: normalizeVolcengineModelValue('video', settings.volcengine.videoModel),
+    },
+    seedance: {
+      enabled: settings.seedance?.enabled !== false,
+      apiModel: typeof settings.seedance?.apiModel === 'string' ? settings.seedance.apiModel : defaultApiSettings.seedance.apiModel,
+      fastApiModel: typeof settings.seedance?.fastApiModel === 'string' ? settings.seedance.fastApiModel : defaultApiSettings.seedance.fastApiModel,
+      defaultExecutor: settings.seedance?.defaultExecutor === 'cli' ? 'cli' : 'ark',
+      cliModelVersion: normalizeSeedanceModelVersion(
+        settings.seedance?.cliModelVersion
+          ?? (settings.seedance as unknown as Record<string, unknown> | undefined)?.modelVersion,
+        defaultApiSettings.seedance.cliModelVersion,
+      ),
+      pollIntervalSec: Number.isFinite(settings.seedance?.pollIntervalSec)
+        ? Math.max(5, Math.min(60, Number(settings.seedance.pollIntervalSec)))
+        : defaultApiSettings.seedance.pollIntervalSec,
+      bridgeUrl: typeof settings.seedance?.bridgeUrl === 'string' ? settings.seedance.bridgeUrl : defaultApiSettings.seedance.bridgeUrl,
+    },
+    tos: {
+      enabled: Boolean(settings.tos?.enabled),
+      region: typeof settings.tos?.region === 'string' ? settings.tos.region : defaultApiSettings.tos!.region,
+      endpoint: typeof settings.tos?.endpoint === 'string' ? settings.tos.endpoint : defaultApiSettings.tos!.endpoint,
+      bucket: typeof settings.tos?.bucket === 'string' ? settings.tos.bucket : '',
+      accessKeyId: typeof settings.tos?.accessKeyId === 'string' ? settings.tos.accessKeyId : '',
+      accessKeySecret: typeof settings.tos?.accessKeySecret === 'string' ? settings.tos.accessKeySecret : '',
+      pathPrefix: typeof settings.tos?.pathPrefix === 'string' ? settings.tos.pathPrefix : defaultApiSettings.tos!.pathPrefix,
+    },
+  };
+}
+
+function mergeApiSettings(parsed?: Partial<ApiSettings>): ApiSettings {
+  return normalizeApiSettings({
+    gemini: { ...defaultApiSettings.gemini, ...(parsed?.gemini || {}) },
+    volcengine: { ...defaultApiSettings.volcengine, ...(parsed?.volcengine || {}) },
+    seedance: { ...defaultApiSettings.seedance, ...(parsed?.seedance || {}) },
+    tos: { ...defaultApiSettings.tos, ...(parsed?.tos || {}) },
+    defaultModels: { ...defaultApiSettings.defaultModels, ...(parsed?.defaultModels || {}) },
+  });
+}
+
+export function setCachedApiSettings(settings: ApiSettings): ApiSettings {
+  cachedApiSettings = mergeApiSettings(settings);
+  return cachedApiSettings;
+}
+
+export function loadApiSettings(): ApiSettings {
+  return cachedApiSettings;
+}
+
+export function getModelSourceDisplayValue(settings: ApiSettings, sourceId: ModelSourceId): string {
+  const value = readModelSource(settings, sourceId);
+  if (!value || !sourceId) return '';
+  const providerId = sourceId.startsWith('volcengine.') ? 'volcengine' : 'gemini';
+  return formatConfiguredModelDisplay(providerId, ROLE_BY_SOURCE_ID[sourceId], value);
+}
+
+export function getModelSourceOptions(settings: ApiSettings, role: ModelRole): ModelSourceOption[] {
+  return getModelSourceOptionsForSelection(settings, role, false);
+}
+
+export function getModelSourceOptionsForSelection(settings: ApiSettings, role: ModelRole, includeDisabledProviders: boolean): ModelSourceOption[] {
+  return ROLE_SOURCE_IDS[role]
+    .map((sourceId) => {
+      if (sourceId.startsWith('volcengine.') && !includeDisabledProviders && !settings.volcengine.enabled) return null;
+      const value = readModelSource(settings, sourceId);
+      if (!value) return null;
+      return {
+        id: sourceId,
+        label: getModelSourceDisplayValue(settings, sourceId),
+        providerLabel: MODEL_SOURCE_META[sourceId].providerLabel,
+        value,
+      };
+    })
+    .filter((option): option is ModelSourceOption => Boolean(option));
+}
+
+export function resolveModelSource(settings: ApiSettings, sourceId: ModelSourceId): string {
+  return readModelSource(settings, sourceId);
+}
+
+export function getDefaultModelSource(settings: ApiSettings, role: ModelRole): ModelSourceId {
+  const configured = settings.defaultModels[role];
+  if (configured && readModelSource(settings, configured)) return configured;
+  const firstAvailable = getModelSourceOptions(settings, role)[0];
+  return firstAvailable?.id || '';
+}
+
+export function getFlowOverrideOptions(settings: ApiSettings, category: FlowModelCategory): Array<{ id: 'default' | ModelSourceId; label: string; providerLabel?: string }> {
+  const roles: Record<FlowModelCategory, ModelRole[]> = { text: ['text'], image: ['image'], video: ['video'] };
+  const seen = new Set<string>();
+  const items: Array<{ id: 'default' | ModelSourceId; label: string; providerLabel?: string }> = [{ id: 'default', label: '使用默认配置' }];
+  for (const role of roles[category]) {
+    for (const option of getModelSourceOptions(settings, role)) {
+      if (seen.has(option.id)) continue;
+      seen.add(option.id);
+      items.push({ id: option.id, label: option.label, providerLabel: option.providerLabel });
+    }
+  }
+  return items;
+}
+
+// --- 船长！这里是最终合并后的持久化函数，只声明一次，且逻辑闭合 ---
+
+export async function loadPersistedApiSettings(): Promise<ApiSettings> {
+  try {
+    const persisted = await loadPersistedAppState<Partial<ApiSettings>>(API_SETTINGS_STATE_KEY);
+    cachedApiSettings = mergeApiSettings(persisted.value || undefined);
+  } catch (error) {
+    console.warn('[ApiConfig] Using default settings due to load failure');
+    cachedApiSettings = defaultApiSettings;
+  }
+  return cachedApiSettings;
+}
+
+export async function saveApiSettings(settings: ApiSettings) {
+  try {
+    const normalized = setCachedApiSettings(settings);
+    await savePersistedAppState(API_SETTINGS_STATE_KEY, normalized);
+  } catch (error) {
+    console.error('Failed to save API settings', error);
+  }
+}
