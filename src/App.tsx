@@ -85,7 +85,7 @@ import {
   getSourceProviderKey,
   getVolcengineRoleModelOptions,
 } from './features/modelSelection/utils/modelSelection.ts';
-import {if (typeof window !== 'undefined') {
+ {if (typeof window !== 'undefined') {
   (window as any).electronAPI = (window as any).electronAPI || {
     isElectron: false,
     getAppVersion: () => Promise.resolve('1.0.0-web'),
