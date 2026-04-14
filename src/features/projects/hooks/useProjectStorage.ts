@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-
-import { loadPersistedAppState, savePersistedAppState } from '../../app/services/appStateStore.ts';
 import type { Project } from '../../../types.ts';
 
 type UseProjectStorageArgs = {
@@ -14,7 +12,7 @@ type UseProjectStorageArgs = {
   projectPersistDelayMs: number;
 };
 
-const PROJECTS_STATE_KEY = 'projects';
+const PROJECTS_STATE_KEY = 'tapdance_projects_v1'; // 修改 key 名防止冲突
 
 export function useProjectStorage({
   project,
@@ -35,77 +33,52 @@ export function useProjectStorage({
 
   useEffect(() => {
     toProjectListEntryRef.current = toProjectListEntry;
-  }, [toProjectListEntry]);
-
-  useEffect(() => {
     upsertProjectListEntryRef.current = upsertProjectListEntry;
-  }, [upsertProjectListEntry]);
-
-  useEffect(() => {
     isProjectDetailViewRef.current = isProjectDetailView;
-  }, [isProjectDetailView]);
-
-  useEffect(() => {
     isProjectEmptyRef.current = isProjectEmpty;
-  }, [isProjectEmpty]);
+  }, [toProjectListEntry, upsertProjectListEntry, isProjectDetailView, isProjectEmpty]);
 
+  // 第一步：初始化加载（改为从浏览器 LocalStorage 读取）
   useEffect(() => {
-    let cancelled = false;
-
-    const loadProjects = async () => {
+    const loadFromLocalStorage = () => {
       try {
-        const persisted = await loadPersistedAppState<Project[]>(PROJECTS_STATE_KEY);
-        if (cancelled) {
-          return;
-        }
-
-        if (persisted.value && Array.isArray(persisted.value)) {
-          setProjects(persisted.value.map((item) => toProjectListEntryRef.current(item)));
-          return;
+        const saved = localStorage.getItem(PROJECTS_STATE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setProjects(parsed.map((item) => toProjectListEntryRef.current(item)));
+          }
         }
       } catch (error) {
-        console.error('Failed to load projects from bridge store', error);
+        console.error('LocalStorage load error:', error);
       } finally {
-        if (!cancelled) {
-          setIsLoaded(true);
-        }
+        setIsLoaded(true);
       }
     };
-
-    void loadProjects();
-
-    return () => {
-      cancelled = true;
-    };
+    loadFromLocalStorage();
   }, []);
 
+  // 第二步：保存逻辑（改为存入浏览器 LocalStorage）
   useEffect(() => {
-    if (!isLoaded) {
-      return;
-    }
+    if (!isLoaded) return;
 
     const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        try {
-          await savePersistedAppState(PROJECTS_STATE_KEY, projects);
-        } catch (error) {
-          console.error('Failed to save projects to bridge store', error);
-          alert('持久化数据库写入失败，无法保存项目。');
-        }
-      })();
+      try {
+        localStorage.setItem(PROJECTS_STATE_KEY, JSON.stringify(projects));
+        console.log('OneFlow: Data persisted to LocalStorage');
+      } catch (error) {
+        console.error('LocalStorage save error:', error);
+        // 这里不再 alert，防止烦人的弹窗，只会静默报错
+      }
     }, projectPersistDelayMs);
 
     return () => window.clearTimeout(timeoutId);
   }, [isLoaded, projectPersistDelayMs, projects]);
 
+  // 第三步：同步当前项目到列表
   useEffect(() => {
-    if (!project.id) {
-      return;
-    }
-
-    if (!isProjectDetailViewRef.current(view) && isProjectEmptyRef.current(project)) {
-      return;
-    }
+    if (!project.id) return;
+    if (!isProjectDetailViewRef.current(view) && isProjectEmptyRef.current(project)) return;
 
     const timeoutId = window.setTimeout(() => {
       const nextProject = toProjectListEntryRef.current(project);
@@ -115,9 +88,5 @@ export function useProjectStorage({
     return () => window.clearTimeout(timeoutId);
   }, [project, projectListSyncDelayMs, view]);
 
-  return {
-    projects,
-    setProjects,
-    isLoaded,
-  };
+  return { projects, setProjects, isLoaded };
 }
