@@ -128,8 +128,4 @@ RENREN_APP_DATA_DIR="./local_data"
 - [Seedance 极速成片设计](docs/seedance-fast-video-design.md)
 - [视频参考素材设计](docs/video-reference-design.md)
 
-## 交流
 
-如有问题可以进群讨论：
-
-![Tapdance 交流群二维码](public/QRCode.JPG)
