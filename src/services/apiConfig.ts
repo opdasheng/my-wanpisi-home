@@ -548,11 +548,26 @@ export function getFlowOverrideOptions(settings: ApiSettings, category: FlowMode
   return items;
 }
 
+
+export async function loadPersistedApiSettings(): Promise<ApiSettings> {
+  try {
+    const persisted = await loadPersistedAppState<Partial<ApiSettings>>(API_SETTINGS_STATE_KEY);
+    // 即使没拿到数据，mergeApiSettings 也会用默认值兜底，不会崩溃
+    cachedApiSettings = mergeApiSettings(persisted.value || undefined);
+  } catch (error) {
+    // 彻底静默，只写日志
+    console.warn('[ApiConfig] Using default settings due to load failure');
+    cachedApiSettings = defaultApiSettings;
+  }
+  return cachedApiSettings;
+}
+
 export async function saveApiSettings(settings: ApiSettings) {
   try {
     const normalized = setCachedApiSettings(settings);
     await savePersistedAppState(API_SETTINGS_STATE_KEY, normalized);
   } catch (error) {
+    // 这里确认没有 alert
     console.error('Failed to save API settings', error);
   }
 }
