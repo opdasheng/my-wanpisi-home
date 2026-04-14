@@ -132,7 +132,8 @@ function shouldStartInMockMode(): boolean {
   } catch {
     return false;
   }
-}
+};
+  }
 
 export default function App() {
   const [hasKey, setHasKey] = useState<boolean | null>(null);
