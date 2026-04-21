@@ -14,7 +14,32 @@ export type RealPortraitLibraryAsset = {
   createdAt: string;
 };
 
+export type SeedreamGeneratedPortraitAsset = {
+  id: string;
+  description: string;
+  model: string;
+  prompt: string;
+  expandedPrompt: string;
+  imageUrl: string;
+  createdAt: string;
+};
+
 const REAL_PORTRAIT_LIBRARY_STATE_KEY = 'portraitLibrary.realAssets';
+const SEEDREAM_GENERATED_PORTRAIT_LIBRARY_STATE_KEY = 'portraitLibrary.seedreamGeneratedAssets';
+
+export const SEEDREAM_GENERATED_PORTRAIT_MODEL = 'doubao-seedream-5-0-260128';
+
+export function buildSeedreamGeneratedPortraitPrompt(prompt: string) {
+  const normalizedPrompt = String(prompt || '').trim();
+  return [
+    '用户角色设定：',
+    normalizedPrompt,
+    '',
+    '请将上述角色设定作为唯一角色参考，生成角色设计标准三视图：正视图呈现角色正面全貌，注重身体比例与服饰细节刻画；侧视图展现角色侧面轮廓，强调线条流畅性与立体感塑造；背视图呈现角色背面造型，突出背部装饰与整体协调性。在最左侧添加角色面部正视图的特写，聚焦五官细节与表情刻画，运用细腻光影凸显面部层次感。背景修改成纯白色，整体保持与角色设定一致的美术风格和色彩搭配。比例16:9。',
+    '',
+    '版式要求：从左到右依次为面部五官放大特写、正视图、侧视图、背视图；四个视图必须是同一个角色，五官、发型、体型、服饰、材质和色彩保持一致；画面中不要出现文字、Logo、水印、标尺或注释。',
+  ].join('\n');
+}
 
 async function requestJson<T>(path: string, init?: RequestInit, explicitBaseUrl?: string): Promise<T> {
   const response = await fetch(buildSeedanceBridgeRequestUrl(path, explicitBaseUrl), {
@@ -114,6 +139,35 @@ function normalizeRealPortraitLibraryAsset(value: unknown): RealPortraitLibraryA
   };
 }
 
+function normalizeSeedreamGeneratedPortraitAsset(value: unknown): SeedreamGeneratedPortraitAsset | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<SeedreamGeneratedPortraitAsset>;
+  const id = String(candidate.id || '').trim();
+  const prompt = String(candidate.prompt || '').trim();
+  const imageUrl = String(candidate.imageUrl || '').trim();
+  const expandedPrompt = String(candidate.expandedPrompt || '').trim();
+  const description = String(candidate.description || '').trim() || prompt.slice(0, 48) || 'Seedream 生成虚拟人像';
+  const model = String(candidate.model || '').trim() || SEEDREAM_GENERATED_PORTRAIT_MODEL;
+  const createdAt = String(candidate.createdAt || '').trim() || new Date().toISOString();
+
+  if (!id || !prompt || !expandedPrompt || !imageUrl) {
+    return null;
+  }
+
+  return {
+    id,
+    description,
+    model,
+    prompt,
+    expandedPrompt,
+    imageUrl,
+    createdAt,
+  };
+}
+
 export async function fetchRealPortraitLibraryAssets(baseUrl?: string) {
   const persisted = await loadPersistedAppState<RealPortraitLibraryAsset[]>(REAL_PORTRAIT_LIBRARY_STATE_KEY, baseUrl);
   const items = Array.isArray(persisted.value)
@@ -132,5 +186,26 @@ export async function saveRealPortraitLibraryAssets(items: RealPortraitLibraryAs
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
   await savePersistedAppState(REAL_PORTRAIT_LIBRARY_STATE_KEY, normalizedItems, baseUrl);
+  return normalizedItems;
+}
+
+export async function fetchSeedreamGeneratedPortraitAssets(baseUrl?: string) {
+  const persisted = await loadPersistedAppState<SeedreamGeneratedPortraitAsset[]>(SEEDREAM_GENERATED_PORTRAIT_LIBRARY_STATE_KEY, baseUrl);
+  const items = Array.isArray(persisted.value)
+    ? persisted.value
+      .map((item) => normalizeSeedreamGeneratedPortraitAsset(item))
+      .filter((item): item is SeedreamGeneratedPortraitAsset => Boolean(item))
+    : [];
+
+  return items.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function saveSeedreamGeneratedPortraitAssets(items: SeedreamGeneratedPortraitAsset[], baseUrl?: string) {
+  const normalizedItems = items
+    .map((item) => normalizeSeedreamGeneratedPortraitAsset(item))
+    .filter((item): item is SeedreamGeneratedPortraitAsset => Boolean(item))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  await savePersistedAppState(SEEDREAM_GENERATED_PORTRAIT_LIBRARY_STATE_KEY, normalizedItems, baseUrl);
   return normalizedItems;
 }

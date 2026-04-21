@@ -330,6 +330,37 @@ test('syncFastFlowSeedanceDraft only includes checked references and storyboard 
   assert.ok(draft.assets.every((asset) => asset.role === 'reference_image'));
 });
 
+test('syncFastFlowSeedanceDraft submits Seedream generated portrait references as images even with an asset id', () => {
+  const project = createEmptyFastVideoProject();
+  project.input.prompt = '虚拟人像打招呼';
+  project.input.referenceImages = [
+    {
+      id: 'seedream-portrait-1',
+      imageUrl: 'https://example.com/seedream-portrait.png',
+      assetId: 'portrait-library:seedream:seedream-portrait-1',
+      referenceType: 'person',
+      selectedForVideo: true,
+      submitMode: 'reference_image',
+    },
+  ];
+  project.videoPrompt = {
+    prompt: '最终视频提示词',
+    promptZh: '最终视频提示词',
+  };
+  project.executionConfig.executor = 'ark';
+  project.seedanceDraft = {
+    ...createDefaultFastSeedanceDraft(project.input, project.videoPrompt.prompt),
+    baseTemplateId: 'multi_image_reference',
+  };
+
+  const draft = syncFastFlowSeedanceDraft(project);
+
+  assert.deepEqual(
+    draft.assets.map((asset) => asset.urlOrData),
+    ['https://example.com/seedream-portrait.png'],
+  );
+});
+
 test('syncFastFlowSeedanceDraft uses the first and last checked storyboard images for first-last-frame mode', () => {
   const project = createEmptyFastVideoProject();
   project.input.prompt = '产品展示';

@@ -1572,12 +1572,14 @@ export function FastInputView({
         <div className="flex-1 overflow-y-auto p-2 md:p-6 bg-[var(--studio-surface)]">
           <PortraitLibraryView
             isModal={true}
-            onSelect={(imgUrl, assetId) => {
+            onSelect={(imgUrl, assetId, meta) => {
               if (portraitPickerTargetId) {
                 onUpdateReferenceImage(portraitPickerTargetId, {
                   imageUrl: imgUrl,
                   assetId: assetId,
-                  referenceType: 'person'
+                  referenceType: 'person',
+                  description: meta?.description || '人像库参考图',
+                  submitMode: meta?.submitMode || 'auto',
                 });
               }
               setPortraitPickerTargetId(null);

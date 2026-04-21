@@ -140,6 +140,7 @@ function createFastReferenceImageFromMaterial(material: ProjectGroupImageAsset):
     referenceType: inferFastReferenceImageTypeFromMaterial(material),
     description: material.title || material.sourceLabel || '历史素材',
     selectedForVideo: true,
+    submitMode: 'auto',
   };
 }
 
@@ -354,6 +355,7 @@ export function createFastVideoFlowActions({
             referenceType: 'other',
             description: '',
             selectedForVideo: true,
+            submitMode: 'auto',
           },
         ],
       },
@@ -426,6 +428,7 @@ export function createFastVideoFlowActions({
       referenceType: inferFastReferenceImageTypeFromMaterial(material),
       description: material.title || material.sourceLabel || '历史素材',
       selectedForVideo: true,
+      submitMode: 'auto',
     });
   };
 
@@ -567,7 +570,7 @@ export function createFastVideoFlowActions({
         title: reference?.description || `参考图 ${referenceIndex + 1}`,
         fileNameHint: file.name,
       });
-      handleUpdateFastReferenceImage(referenceId, { imageUrl: persistedImage.url });
+      handleUpdateFastReferenceImage(referenceId, { imageUrl: persistedImage.url, submitMode: 'auto' });
     } catch (error) {
       console.error('Failed to upload fast reference image:', error);
       openSeedanceErrorModal({
@@ -592,7 +595,7 @@ export function createFastVideoFlowActions({
         title: reference?.description || `参考图 ${referenceIndex + 1}`,
         fileNameHint: file.name,
       });
-      handleUpdateFastReferenceImage(referenceId, { imageUrl: persistedImage.url });
+      handleUpdateFastReferenceImage(referenceId, { imageUrl: persistedImage.url, submitMode: 'auto' });
     } catch (error) {
       console.error('Failed to paste fast reference image:', error);
       openSeedanceErrorModal({

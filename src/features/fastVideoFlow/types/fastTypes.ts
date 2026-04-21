@@ -6,6 +6,7 @@ export type FastAssetStatus = 'idle' | 'generating' | 'completed' | 'failed';
 export type FastTaskStatus = 'idle' | 'queued' | 'submitting' | 'generating' | 'completed' | 'failed' | 'cancelled';
 export type SeedanceHealthStatus = 'unknown' | 'logged_in' | 'logged_out' | 'error';
 export type FastReferenceImageType = 'person' | 'scene' | 'product' | 'style' | 'other';
+export type FastReferenceImageSubmitMode = 'auto' | 'reference_image';
 
 export interface FastReferenceImage {
   id: string;
@@ -14,6 +15,7 @@ export interface FastReferenceImage {
   referenceType?: FastReferenceImageType;
   description?: string;
   selectedForVideo?: boolean;
+  submitMode?: FastReferenceImageSubmitMode;
 }
 
 export type FastReferenceVideoType = 'motion' | 'camera' | 'effect' | 'edit' | 'extend' | 'other';

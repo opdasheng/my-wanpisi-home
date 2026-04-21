@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react';
 import { motion } from 'motion/react';
-import { BookOpenText, ExternalLink, FolderOpen, Plus, RefreshCw, Upload, Users, X } from 'lucide-react';
+import { BookOpenText, ExternalLink, FolderOpen, Plus, RefreshCw, Sparkles, Upload, Users, X } from 'lucide-react';
 import {
   cx,
   StudioModal,
@@ -12,20 +12,30 @@ import {
 import type { WorkspaceThemeMode } from '../../../components/studio/WorkspaceViews.tsx';
 import { saveMediaToAssetLibrary } from '../../../services/assetLibrary.ts';
 import {
+  buildSeedreamGeneratedPortraitPrompt,
   buildPortraitLibraryFileUrl,
   fetchRealPortraitLibraryAssets,
   fetchPortraitLibraryConfig,
+  fetchSeedreamGeneratedPortraitAssets,
   getPortraitLibraryRelativePath,
+  saveSeedreamGeneratedPortraitAssets,
   saveRealPortraitLibraryAssets,
+  SEEDREAM_GENERATED_PORTRAIT_MODEL,
   updatePortraitLibraryConfig,
   type PortraitLibraryConfig,
   type RealPortraitLibraryAsset,
+  type SeedreamGeneratedPortraitAsset,
 } from '../../../services/portraitLibrary.ts';
+import { generateStoryboardImage } from '../../../services/volcengineService.ts';
 
 type PortraitLibraryViewProps = {
   themeMode?: WorkspaceThemeMode;
   isModal?: boolean;
-  onSelect?: (imgUrl: string, assetId: string) => void;
+  onSelect?: (
+    imgUrl: string,
+    assetId: string,
+    meta?: { description?: string; submitMode?: 'auto' | 'reference_image' },
+  ) => void;
 };
 
 export type PortraitItem = {
@@ -62,13 +72,18 @@ type BrowserPortraitFolderState = {
   fileCount: number;
 };
 
-type PortraitLibraryTab = 'public' | 'real';
+type PortraitLibraryTab = 'public' | 'real' | 'seedream';
 
 type RealPortraitDraftState = {
   description: string;
   assetId: string;
   imageDataUrl: string;
   fileNameHint: string;
+};
+
+type SeedreamPortraitDraftState = {
+  model: string;
+  prompt: string;
 };
 
 const ITEMS_PER_PAGE = 30;
@@ -79,12 +94,25 @@ const BROWSER_DIRECTORY_INPUT_PROPS = {
 } as const;
 const REAL_PORTRAIT_LIBRARY_GROUP_NAME = '人像素材库';
 const REAL_PORTRAIT_LIBRARY_PROJECT_NAME = '真人人像';
+const SEEDREAM_PORTRAIT_LIBRARY_PROJECT_NAME = 'Seedream 生成';
 const EMPTY_REAL_PORTRAIT_DRAFT: RealPortraitDraftState = {
   description: '',
   assetId: '',
   imageDataUrl: '',
   fileNameHint: '',
 };
+const EMPTY_SEEDREAM_PORTRAIT_DRAFT: SeedreamPortraitDraftState = {
+  model: SEEDREAM_GENERATED_PORTRAIT_MODEL,
+  prompt: '',
+};
+
+function buildSeedreamPortraitTitle(prompt: string) {
+  const normalizedPrompt = prompt.replace(/\s+/gu, ' ').trim();
+  if (!normalizedPrompt) {
+    return 'Seedream 生成虚拟人像';
+  }
+  return normalizedPrompt.length > 36 ? `${normalizedPrompt.slice(0, 36)}...` : normalizedPrompt;
+}
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -131,6 +159,14 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
   const [isSavingRealPortraitAsset, setIsSavingRealPortraitAsset] = useState(false);
   const [realPortraitDraft, setRealPortraitDraft] = useState<RealPortraitDraftState>(EMPTY_REAL_PORTRAIT_DRAFT);
   const [realPortraitDraftError, setRealPortraitDraftError] = useState('');
+  const [seedreamPortraitAssets, setSeedreamPortraitAssets] = useState<SeedreamGeneratedPortraitAsset[]>([]);
+  const [isLoadingSeedreamPortraitAssets, setIsLoadingSeedreamPortraitAssets] = useState(false);
+  const [seedreamPortraitError, setSeedreamPortraitError] = useState('');
+  const [seedreamPortraitFeedback, setSeedreamPortraitFeedback] = useState('');
+  const [isSeedreamPortraitModalOpen, setIsSeedreamPortraitModalOpen] = useState(false);
+  const [isGeneratingSeedreamPortrait, setIsGeneratingSeedreamPortrait] = useState(false);
+  const [seedreamPortraitDraft, setSeedreamPortraitDraft] = useState<SeedreamPortraitDraftState>(EMPTY_SEEDREAM_PORTRAIT_DRAFT);
+  const [seedreamPortraitDraftError, setSeedreamPortraitDraftError] = useState('');
   const browserDirectoryInputRef = useRef<HTMLInputElement | null>(null);
   const realPortraitUploadInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -157,6 +193,20 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       setRealPortraitError(loadError?.message || '加载真人人像资产失败');
     } finally {
       setIsLoadingRealPortraitAssets(false);
+    }
+  };
+
+  const refreshSeedreamPortraitAssets = async () => {
+    setIsLoadingSeedreamPortraitAssets(true);
+    setSeedreamPortraitError('');
+    try {
+      const nextAssets = await fetchSeedreamGeneratedPortraitAssets();
+      setSeedreamPortraitAssets(nextAssets);
+    } catch (loadError: any) {
+      console.error('Failed to load Seedream portrait library assets:', loadError);
+      setSeedreamPortraitError(loadError?.message || '加载 Seedream 生成人像失败');
+    } finally {
+      setIsLoadingSeedreamPortraitAssets(false);
     }
   };
 
@@ -203,6 +253,10 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
 
   useEffect(() => {
     void refreshRealPortraitAssets();
+  }, []);
+
+  useEffect(() => {
+    void refreshSeedreamPortraitAssets();
   }, []);
 
   useEffect(() => () => {
@@ -270,8 +324,14 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
 
   const publicPortraitCount = filteredData.length;
   const realPortraitCount = realPortraitAssets.length;
+  const seedreamPortraitCount = seedreamPortraitAssets.length;
   const visibleData = filteredData.slice(0, page * ITEMS_PER_PAGE);
   const hasMore = visibleData.length < filteredData.length;
+  const seedreamExpandedPromptPreview = useMemo(() => (
+    seedreamPortraitDraft.prompt.trim()
+      ? buildSeedreamGeneratedPortraitPrompt(seedreamPortraitDraft.prompt)
+      : ''
+  ), [seedreamPortraitDraft.prompt]);
 
   const handleFilterChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -338,6 +398,17 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     setIsAddRealPortraitModalOpen(true);
   };
 
+  const resetSeedreamPortraitDraft = () => {
+    setSeedreamPortraitDraft(EMPTY_SEEDREAM_PORTRAIT_DRAFT);
+    setSeedreamPortraitDraftError('');
+  };
+
+  const handleOpenSeedreamPortraitModal = () => {
+    setSeedreamPortraitFeedback('');
+    resetSeedreamPortraitDraft();
+    setIsSeedreamPortraitModalOpen(true);
+  };
+
   const handleSaveRealPortraitAsset = async () => {
     const description = realPortraitDraft.description.trim();
     const assetId = realPortraitDraft.assetId.trim();
@@ -390,6 +461,57 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       setRealPortraitDraftError(saveError?.message || '保存真人人像资产失败。');
     } finally {
       setIsSavingRealPortraitAsset(false);
+    }
+  };
+
+  const handleGenerateSeedreamPortraitAsset = async () => {
+    const prompt = seedreamPortraitDraft.prompt.trim();
+    const model = seedreamPortraitDraft.model.trim() || SEEDREAM_GENERATED_PORTRAIT_MODEL;
+
+    if (!prompt) {
+      setSeedreamPortraitDraftError('请填写提示词。');
+      return;
+    }
+
+    setIsGeneratingSeedreamPortrait(true);
+    setSeedreamPortraitDraftError('');
+
+    try {
+      const recordId = crypto.randomUUID?.() || `seedream-portrait-${Date.now()}`;
+      const expandedPrompt = buildSeedreamGeneratedPortraitPrompt(prompt);
+      const generatedImageUrl = await generateStoryboardImage(expandedPrompt, '16:9', model);
+      const description = buildSeedreamPortraitTitle(prompt);
+      const savedFile = await saveMediaToAssetLibrary({
+        sourceUrl: generatedImageUrl,
+        kind: 'image',
+        assetId: `portrait-library:seedream:${recordId}`,
+        title: description,
+        groupName: REAL_PORTRAIT_LIBRARY_GROUP_NAME,
+        projectName: SEEDREAM_PORTRAIT_LIBRARY_PROJECT_NAME,
+        fileNameHint: `seedream-portrait-${recordId}.png`,
+      });
+      const nextAsset: SeedreamGeneratedPortraitAsset = {
+        id: recordId,
+        description,
+        model,
+        prompt,
+        expandedPrompt,
+        imageUrl: savedFile.url,
+        createdAt: new Date().toISOString(),
+      };
+      const nextAssets = await saveSeedreamGeneratedPortraitAssets([nextAsset, ...seedreamPortraitAssets]);
+
+      setSeedreamPortraitAssets(nextAssets);
+      setSeedreamPortraitError('');
+      setSeedreamPortraitFeedback(`已生成虚拟人像「${description}」`);
+      setActiveTab('seedream');
+      setIsSeedreamPortraitModalOpen(false);
+      resetSeedreamPortraitDraft();
+    } catch (generateError: any) {
+      console.error('Failed to generate Seedream portrait asset:', generateError);
+      setSeedreamPortraitDraftError(generateError?.message || 'Seedream 生成虚拟人像失败。');
+    } finally {
+      setIsGeneratingSeedreamPortrait(false);
     }
   };
 
@@ -535,7 +657,9 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
               <div className="flex h-11 items-center justify-center rounded-2xl border border-[var(--studio-border)] bg-white/5 px-4 font-medium text-[var(--studio-muted)]">
                 {activeTab === 'public'
                   ? loading ? '加载中...' : `平台公开 ${publicPortraitCount} 人`
-                  : isLoadingRealPortraitAssets ? '加载中...' : `真人人像 ${realPortraitCount} 人`}
+                  : activeTab === 'real'
+                    ? isLoadingRealPortraitAssets ? '加载中...' : `真人人像 ${realPortraitCount} 人`
+                    : isLoadingSeedreamPortraitAssets ? '加载中...' : `Seedream ${seedreamPortraitCount} 张`}
               </div>
             </div>
           )}
@@ -548,6 +672,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
             {([
               { key: 'public', label: '平台公开', count: publicPortraitCount },
               { key: 'real', label: '真人人像', count: realPortraitCount },
+              { key: 'seedream', label: 'Seedream 生成', count: seedreamPortraitCount },
             ] as Array<{ key: PortraitLibraryTab; label: string; count: number }>).map((tab) => {
               const isActive = activeTab === tab.key;
               return (
@@ -662,7 +787,10 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                       animate={{ opacity: 1, y: 0 }}
                       key={item.AssetGroup.SID}
                       className={`group relative aspect-[3/4] overflow-hidden rounded-xl border bg-[var(--studio-surface-soft)] md:rounded-2xl ${onSelect ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500' : 'border-[var(--studio-border)]'}`}
-                      onClick={onSelect && imageUrl ? () => onSelect(imageUrl, assetId) : undefined}
+                      onClick={onSelect && imageUrl ? () => onSelect(imageUrl, assetId, {
+                        description: item.AssetGroup.Title || item.AssetGroup.Description,
+                        submitMode: 'auto',
+                      }) : undefined}
                     >
                       {imageUrl ? (
                         <img
@@ -703,7 +831,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
               )}
             </>
           )
-        ) : (
+        ) : activeTab === 'real' ? (
           <div className="space-y-5">
             <StudioPanel className="flex flex-wrap items-start justify-between gap-4 p-5" tone="soft">
               <div>
@@ -765,7 +893,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                         ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500'
                         : 'border-[var(--studio-border)]',
                     )}
-                    onClick={onSelect ? () => onSelect(item.imageUrl, item.assetId) : undefined}
+                    onClick={onSelect ? () => onSelect(item.imageUrl, item.assetId, { description: item.description, submitMode: 'auto' }) : undefined}
                   >
                     <div className="relative aspect-[3/4] overflow-hidden">
                       <img
@@ -778,6 +906,88 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                       <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] translate-y-1 rounded-full border border-black/10 bg-black/72 px-2.5 py-1 text-[10px] font-medium text-cyan-50 opacity-0 shadow-[0_8px_24px_rgba(15,23,42,0.35)] backdrop-blur-sm transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100">
                         <span className="block truncate">asset://{item.assetId}</span>
                       </div>
+                    </div>
+
+                    <div className="space-y-1.5 border-t border-[var(--studio-border)] px-3 py-3">
+                      <h4 className="line-clamp-2 text-sm font-semibold text-[var(--studio-text)] md:text-base">
+                        {item.description}
+                      </h4>
+                      <p className={`text-[10px] md:text-xs ${dimTextClass}`}>
+                        {new Date(item.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <StudioPanel className="flex flex-wrap items-start justify-between gap-4 p-5" tone="soft">
+              <div>
+                <div className="studio-eyebrow">Seedream Portraits</div>
+                <h2 className="mt-2 text-xl font-semibold text-[var(--studio-text)]">Seedream 生成虚拟人像</h2>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenSeedreamPortraitModal}
+                className="studio-button studio-button-primary px-4"
+              >
+                <Sparkles className="h-4 w-4" />
+                Seedream 生成虚拟人像
+              </button>
+            </StudioPanel>
+
+            {seedreamPortraitFeedback ? (
+              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                {seedreamPortraitFeedback}
+              </div>
+            ) : null}
+
+            {seedreamPortraitError ? (
+              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {seedreamPortraitError}
+              </div>
+            ) : null}
+
+            {isLoadingSeedreamPortraitAssets ? (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className={`relative flex aspect-video items-center justify-center overflow-hidden rounded-2xl border ${skeletonClass}`}>
+                    <img src="./assets/loading.gif" alt="" className="studio-loading-gif !h-1/2 !w-1/2 opacity-30" />
+                  </div>
+                ))}
+              </div>
+            ) : seedreamPortraitAssets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-[var(--studio-border)] bg-[var(--studio-surface-soft)] py-20">
+                <span className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5">
+                  <Sparkles className="h-6 w-6 text-[var(--studio-muted)]" />
+                </span>
+                <p className="text-lg font-medium text-[var(--studio-text)]">还没有 Seedream 生成虚拟人像</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {seedreamPortraitAssets.map((item) => (
+                  <motion.div
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    key={item.id}
+                    className={cx(
+                      'group overflow-hidden rounded-xl border bg-[var(--studio-surface-soft)] md:rounded-2xl',
+                      onSelect
+                        ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500'
+                        : 'border-[var(--studio-border)]',
+                    )}
+                    onClick={onSelect ? () => onSelect(item.imageUrl, '', { description: item.description, submitMode: 'reference_image' }) : undefined}
+                  >
+                    <div className="relative aspect-video overflow-hidden">
+                      <img
+                        src={item.imageUrl}
+                        alt={item.description}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        loading="lazy"
+                      />
                     </div>
 
                     <div className="space-y-1.5 border-t border-[var(--studio-border)] px-3 py-3">
@@ -969,6 +1179,118 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                 </div>
               </StudioPanel>
             </div>
+          </div>
+        </div>
+      </StudioModal>
+
+      <StudioModal
+        open={isSeedreamPortraitModalOpen}
+        onClose={() => {
+          if (!isGeneratingSeedreamPortrait) {
+            setIsSeedreamPortraitModalOpen(false);
+            resetSeedreamPortraitDraft();
+          }
+        }}
+        themeMode={resolvedThemeMode}
+        className="max-w-4xl overflow-hidden p-0"
+        closeOnOverlayClick={!isGeneratingSeedreamPortrait}
+      >
+        <div className="relative">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.22),transparent_58%)]" />
+          <div className="relative border-b border-[var(--studio-border)] px-6 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="studio-eyebrow">Seedream Portraits</div>
+                <h2 className="mt-2 text-2xl font-semibold text-[var(--studio-text)]">Seedream 生成虚拟人像</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isGeneratingSeedreamPortrait) {
+                    setIsSeedreamPortraitModalOpen(false);
+                    resetSeedreamPortraitDraft();
+                  }
+                }}
+                className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border transition-colors ${secondaryButtonClass}`}
+                aria-label="关闭"
+                disabled={isGeneratingSeedreamPortrait}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="grid max-h-[74vh] gap-6 overflow-y-auto px-6 py-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(22rem,1.1fr)]">
+            <div className="space-y-5">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--studio-dim)]">模型</span>
+                <StudioSelect
+                  value={seedreamPortraitDraft.model}
+                  onChange={(event) => {
+                    setSeedreamPortraitDraft((prev) => ({ ...prev, model: event.target.value }));
+                    setSeedreamPortraitDraftError('');
+                  }}
+                  disabled={isGeneratingSeedreamPortrait}
+                  className="studio-select mt-2"
+                >
+                  <option value={SEEDREAM_GENERATED_PORTRAIT_MODEL}>{SEEDREAM_GENERATED_PORTRAIT_MODEL}</option>
+                </StudioSelect>
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--studio-dim)]">提示词</span>
+                <textarea
+                  value={seedreamPortraitDraft.prompt}
+                  onChange={(event) => {
+                    setSeedreamPortraitDraft((prev) => ({ ...prev, prompt: event.target.value }));
+                    setSeedreamPortraitDraftError('');
+                  }}
+                  disabled={isGeneratingSeedreamPortrait}
+                  placeholder="例如：28岁女性科技品牌主理人，短发，银灰色机能夹克，冷静自信，写实商业摄影风格。"
+                  className="studio-textarea mt-2 min-h-56"
+                />
+              </label>
+            </div>
+
+            <div className="space-y-4">
+              <div className={`rounded-2xl border p-4 ${softPanelClass}`}>
+                <div className="text-sm font-semibold text-[var(--studio-text)]">扩展提示词</div>
+                <pre className={`mt-3 max-h-[25rem] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 ${dimTextClass}`}>
+                  {seedreamExpandedPromptPreview || '填写提示词后自动生成。'}
+                </pre>
+              </div>
+
+              {seedreamPortraitDraftError ? (
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {seedreamPortraitDraftError}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 border-t border-[var(--studio-border)] px-6 py-5">
+            <button
+              type="button"
+              onClick={() => {
+                if (!isGeneratingSeedreamPortrait) {
+                  setIsSeedreamPortraitModalOpen(false);
+                  resetSeedreamPortraitDraft();
+                }
+              }}
+              disabled={isGeneratingSeedreamPortrait}
+              className="studio-button studio-button-secondary px-4"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGenerateSeedreamPortraitAsset()}
+              disabled={isGeneratingSeedreamPortrait}
+              className="studio-button studio-button-primary px-4"
+            >
+              {isGeneratingSeedreamPortrait ? <img src="./assets/loading.gif" alt="" className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+              Seedream 生成虚拟人像
+            </button>
           </div>
         </div>
       </StudioModal>

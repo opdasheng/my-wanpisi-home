@@ -128,6 +128,10 @@ function normalizeFastReferenceType(value: unknown): FastReferenceImageType {
     : 'other';
 }
 
+function normalizeFastReferenceSubmitMode(value: unknown): FastReferenceImage['submitMode'] {
+  return value === 'reference_image' ? 'reference_image' : 'auto';
+}
+
 function normalizeOverlayTemplateIds(value: unknown): SeedanceOverlayTemplateId[] {
   return normalizeStringList(value).filter((item): item is SeedanceOverlayTemplateId => (
     item === 'auto_audio'
@@ -221,6 +225,7 @@ function normalizeReferenceImages(value: unknown, legacyReferenceImageUrl?: stri
           referenceType: normalizeFastReferenceType(candidate.referenceType),
           description: typeof candidate.description === 'string' ? candidate.description : '',
           selectedForVideo: isFastAssetSelectedForVideo(candidate.selectedForVideo),
+          submitMode: normalizeFastReferenceSubmitMode(candidate.submitMode),
         };
         return normalizedItem;
       })
@@ -242,6 +247,7 @@ function normalizeReferenceImages(value: unknown, legacyReferenceImageUrl?: stri
     referenceType: 'other' as const,
     description: '',
     selectedForVideo: true,
+    submitMode: 'auto',
   }];
 }
 
@@ -316,24 +322,28 @@ export function syncFastFlowSeedanceDraft(fastFlow: FastVideoProject): SeedanceD
 
     if (baseDraft.baseTemplateId === 'multi_image_reference') {
       const referenceAssets = [
-        ...selectedReferenceImages.map((reference, index) => ({
-          id: reference.id || `fast-original-reference-image-${index + 1}`,
-          kind: 'image' as const,
-          source: 'upload' as const,
-          urlOrData: useAssetIdForVideoTask && (reference.assetId || '').trim() ? `asset://${reference.assetId!.trim()}` : reference.imageUrl,
-          role: 'reference_image' as const,
-          label: `参考图${index + 1}是${
-            reference.referenceType === 'person'
-              ? '人物参考图'
-              : reference.referenceType === 'scene'
-                ? '场景参考图'
-                : reference.referenceType === 'product'
-                  ? '产品参考图'
-                  : reference.referenceType === 'style'
-                    ? '风格参考图'
-                    : '参考图'
-          }${useAssetIdForVideoTask && (reference.assetId || '').trim() ? '，提交时使用 asset 素材' : ''}`,
-        })),
+        ...selectedReferenceImages.map((reference, index) => {
+          const referenceAssetId = (reference.assetId || '').trim();
+          const submitAsAsset = useAssetIdForVideoTask && reference.submitMode !== 'reference_image' && Boolean(referenceAssetId);
+          return {
+            id: reference.id || `fast-original-reference-image-${index + 1}`,
+            kind: 'image' as const,
+            source: 'upload' as const,
+            urlOrData: submitAsAsset ? `asset://${referenceAssetId}` : reference.imageUrl,
+            role: 'reference_image' as const,
+            label: `参考图${index + 1}是${
+              reference.referenceType === 'person'
+                ? '人物参考图'
+                : reference.referenceType === 'scene'
+                  ? '场景参考图'
+                  : reference.referenceType === 'product'
+                    ? '产品参考图'
+                    : reference.referenceType === 'style'
+                      ? '风格参考图'
+                      : '参考图'
+            }${submitAsAsset ? '，提交时使用 asset 素材' : ''}`,
+          };
+        }),
         ...selectedReadyScenes.map((scene, index) => ({
           id: `${scene.id}-reference-${index + 1}`,
           kind: 'image' as const,
