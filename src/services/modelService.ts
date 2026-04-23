@@ -1,15 +1,25 @@
 import type { Asset, AspectRatio, Brief, ModelSourceId, Shot, VisualAspectRatio } from '../types.ts';
 import type { FastSceneDraft, FastVideoInput, FastVideoPlan, FastVideoPromptDraft } from '../features/fastVideoFlow/types/fastTypes.ts';
 import * as geminiService from './geminiService.ts';
+import * as openaiImageService from './openaiImageService.ts';
 import * as volcengineService from './volcengineService.ts';
 import { appendModelInvocationLog } from './modelInvocationLog.ts';
 import { buildTransitionVideoGenerationRequest, buildVideoGenerationRequest, normalizeVideoAspectRatio } from './requestBuilders.ts';
+
+const MOCK_OPENAI_IMAGE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 function isVolcengineSource(sourceId?: ModelSourceId) {
   return Boolean(sourceId && sourceId.startsWith('volcengine.'));
 }
 
-function getProvider(sourceId?: ModelSourceId): 'gemini' | 'volcengine' {
+function isOpenAISource(sourceId?: ModelSourceId) {
+  return Boolean(sourceId && sourceId.startsWith('openai.'));
+}
+
+function getProvider(sourceId?: ModelSourceId): 'gemini' | 'volcengine' | 'openai' {
+  if (isOpenAISource(sourceId)) {
+    return 'openai';
+  }
   return isVolcengineSource(sourceId) ? 'volcengine' : 'gemini';
 }
 
@@ -223,7 +233,11 @@ export async function generateStoryboardImage(prompt: string, aspectRatio: Visua
     { prompt, aspectRatio, referenceAssets, useMockMode, hasBaseImage: Boolean(baseImageBase64) },
     () => isVolcengineSource(sourceId)
       ? volcengineService.generateStoryboardImage(prompt, aspectRatio, finalModelName, referenceAssets, useMockMode, baseImageBase64)
-      : geminiService.generateStoryboardImage(prompt, aspectRatio, finalModelName, referenceAssets, useMockMode, baseImageBase64),
+      : isOpenAISource(sourceId)
+        ? (useMockMode
+          ? Promise.resolve(MOCK_OPENAI_IMAGE_DATA_URL)
+          : openaiImageService.generateOpenAIStoryboardImage(prompt, aspectRatio, finalModelName, referenceAssets, baseImageBase64))
+        : geminiService.generateStoryboardImage(prompt, aspectRatio, finalModelName, referenceAssets, useMockMode, baseImageBase64),
   );
 }
 
@@ -257,7 +271,11 @@ export async function generateAssetImage(asset: Asset, brief: Brief, modelName?:
     { asset: assetWithPrompt, brief, useMockMode },
     () => isVolcengineSource(sourceId)
       ? volcengineService.generateAssetImage(assetWithPrompt, brief, finalModelName, useMockMode)
-      : geminiService.generateAssetImage(assetWithPrompt, brief, finalModelName, useMockMode, finalPromptModelName),
+      : isOpenAISource(sourceId)
+        ? (useMockMode
+          ? Promise.resolve(MOCK_OPENAI_IMAGE_DATA_URL)
+          : openaiImageService.generateOpenAIStoryboardImage(assetWithPrompt.imagePrompt || '', '1:1', finalModelName))
+        : geminiService.generateAssetImage(assetWithPrompt, brief, finalModelName, useMockMode, finalPromptModelName),
   );
 }
 

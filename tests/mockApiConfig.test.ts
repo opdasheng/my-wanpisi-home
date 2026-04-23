@@ -27,6 +27,14 @@ test('applyMockApiSettings switches API settings to local mock endpoints and kee
       videoModel: 'doubao-video',
       customModels: [],
     },
+    openai: {
+      enabled: true,
+      apiKey: 'openai-ak',
+      baseUrl: 'https://api.openai.com/v1',
+      promptLanguage: 'en',
+      imageModel: 'gpt-image-2',
+      customModels: [],
+    },
     seedance: {
       enabled: true,
       apiModel: 'seedance-standard',

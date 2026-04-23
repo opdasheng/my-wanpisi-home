@@ -110,6 +110,33 @@ test('getProjectGroupSummary aggregates projects and limits preview images to fo
   assert.equal(groups[0].previewImages.length, 2);
 });
 
+test('getProjectGroupSummary sorts groups by newest project created time descending', () => {
+  const projects = [
+    createProject({
+      id: 'older-project',
+      groupId: 'group-a',
+      groupName: '组 A',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    }),
+    createProject({
+      id: 'newest-project',
+      groupId: 'group-b',
+      groupName: '组 B',
+      createdAt: '2026-01-05T00:00:00.000Z',
+    }),
+    createProject({
+      id: 'middle-project',
+      groupId: 'group-a',
+      groupName: '组 A',
+      createdAt: '2026-01-04T00:00:00.000Z',
+    }),
+  ];
+
+  const groups = getProjectGroupSummary(projects);
+
+  assert.deepEqual(groups.map((group) => group.id), ['group-b', 'group-a']);
+});
+
 test('collectProjectGeneratedImageAssets collects assets and first/last frames', () => {
   const project = createProject({
     id: 'project-1',

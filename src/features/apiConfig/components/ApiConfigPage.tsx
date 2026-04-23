@@ -7,6 +7,7 @@ import { StudioModal, StudioSelect } from '../../../components/studio/StudioPrim
 import type { ApiSettings, ModelSourceId } from '../../../types.ts';
 import {
   DEFAULT_GEMINI_BASE_URL,
+  DEFAULT_OPENAI_BASE_URL,
   DEFAULT_VOLCENGINE_BASE_URL,
   DEFAULT_MODEL_ROLE_META,
   getDefaultModelSource,
@@ -30,12 +31,15 @@ import {
   GEMINI_ROLE_FIELDS,
   GEMINI_ROLE_SOURCE_OPTIONS,
   MODEL_ROLE_ORDER,
+  OPENAI_PROVIDER_MODEL_FIELDS,
+  OPENAI_ROLE_SOURCE_IDS,
   PROMPT_LANGUAGE_FLAGS,
   PROVIDER_CARD_META,
   VOLCENGINE_PROVIDER_MODEL_FIELDS,
   VOLCENGINE_ROLE_FIELDS,
   VOLCENGINE_ROLE_SOURCE_IDS,
   type GeminiModelField,
+  type OpenAIModelField,
   type VolcengineModelField,
 } from '../utils/apiConfigUi.ts';
 
@@ -57,6 +61,7 @@ type ApiConfigPageProps = {
   getSourceProviderKey: (sourceId: ModelSourceId) => ModelProviderId;
   getGeminiRoleModelOptions: (role: ModelRole) => Array<{ value: string; sourceId: ModelSourceId; modelName: string; label: string }>;
   getVolcengineRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
+  getOpenAIRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
   getProviderRoleCatalogOptions: (apiSettings: ApiSettings, providerId: ModelProviderId, role: ModelRole, configuredValue: string) => Array<{ value: string; label: string }>;
   updateGeminiRoleModel: (role: ModelRole, modelId: string) => void;
 };
@@ -71,14 +76,20 @@ type CustomModelDraft = {
 function createCustomModelDraft(providerId: ModelProviderId): CustomModelDraft {
   return {
     providerId,
-    role: 'text',
+    role: providerId === 'openai' ? 'image' : 'text',
     name: '',
     modelId: '',
   };
 }
 
 function getProviderCustomModels(settings: ApiSettings, providerId: ModelProviderId) {
-  return providerId === 'volcengine' ? settings.volcengine.customModels : settings.gemini.customModels;
+  if (providerId === 'volcengine') {
+    return settings.volcengine.customModels;
+  }
+  if (providerId === 'openai') {
+    return settings.openai.customModels;
+  }
+  return settings.gemini.customModels;
 }
 
 function getProviderRoleConfiguredModel(settings: ApiSettings, providerId: ModelProviderId, role: ModelRole) {
@@ -90,6 +101,10 @@ function getProviderRoleConfiguredModel(settings: ApiSettings, providerId: Model
       return settings.gemini.fastVideoModel;
     }
     return settings.gemini.textModel;
+  }
+
+  if (providerId === 'openai') {
+    return role === 'image' ? settings.openai.imageModel : '';
   }
 
   if (role === 'image') {
@@ -109,6 +124,20 @@ function applyProviderRoleModelToSettings(settings: ApiSettings, providerId: Mod
       gemini: {
         ...settings.gemini,
         [field]: modelId,
+      },
+    };
+  }
+
+  if (providerId === 'openai') {
+    if (role !== 'image') {
+      return settings;
+    }
+
+    return {
+      ...settings,
+      openai: {
+        ...settings.openai,
+        imageModel: modelId,
       },
     };
   }
@@ -141,6 +170,7 @@ export function ApiConfigPage({
   getSourceProviderKey,
   getGeminiRoleModelOptions,
   getVolcengineRoleModelOptions,
+  getOpenAIRoleModelOptions,
   getProviderRoleCatalogOptions,
   updateGeminiRoleModel,
 }: ApiConfigPageProps) {
@@ -200,13 +230,21 @@ export function ApiConfigPage({
             customModels: nextCustomModels,
           },
         }
-        : {
-          ...prev,
-          gemini: {
-            ...prev.gemini,
-            customModels: nextCustomModels,
-          },
-        };
+        : providerId === 'openai'
+          ? {
+            ...prev,
+            openai: {
+              ...prev.openai,
+              customModels: nextCustomModels,
+            },
+          }
+          : {
+            ...prev,
+            gemini: {
+              ...prev.gemini,
+              customModels: nextCustomModels,
+            },
+          };
 
       return applyProviderRoleModelToSettings(nextSettings, providerId, role, modelId);
     });
@@ -226,13 +264,21 @@ export function ApiConfigPage({
             customModels: nextCustomModels,
           },
         }
-        : {
-          ...prev,
-          gemini: {
-            ...prev.gemini,
-            customModels: nextCustomModels,
-          },
-        };
+        : providerId === 'openai'
+          ? {
+            ...prev,
+            openai: {
+              ...prev.openai,
+              customModels: nextCustomModels,
+            },
+          }
+          : {
+            ...prev,
+            gemini: {
+              ...prev.gemini,
+              customModels: nextCustomModels,
+            },
+          };
 
       if (getProviderRoleConfiguredModel(prev, providerId, role).trim() !== modelId.trim()) {
         return nextSettings;
@@ -262,20 +308,25 @@ export function ApiConfigPage({
             const meta = DEFAULT_MODEL_ROLE_META[role];
             const value = apiSettings.defaultModels[role] || getDefaultModelSource(apiSettings, role);
             const Icon = role === 'text' ? MessageSquareText : role === 'video' ? Video : Clapperboard;
-            const selectedProvider = getSourceProviderKey(value) as 'gemini' | 'volcengine';
+            const selectedProvider = getSourceProviderKey(value);
             const geminiOptions = getGeminiRoleModelOptions(role);
             const volcengineSourceId = VOLCENGINE_ROLE_SOURCE_IDS[role];
             const volcengineOptions = getVolcengineRoleModelOptions(role);
+            const openaiSourceId = OPENAI_ROLE_SOURCE_IDS[role];
+            const openaiOptions = getOpenAIRoleModelOptions(role);
             const providerOptions = [
-              ...(geminiOptions.length > 0 ? [{ value: 'gemini' as const, label: 'Google AI Studio' }] : []),
-              ...(volcengineOptions.length > 0 ? [{ value: 'volcengine' as const, label: '火山引擎 Ark' }] : []),
+              ...(geminiOptions.length > 0 ? [{ value: 'gemini' as ModelProviderId, label: 'Google AI Studio' }] : []),
+              ...(volcengineOptions.length > 0 ? [{ value: 'volcengine' as ModelProviderId, label: '火山引擎 Ark' }] : []),
+              ...(openaiSourceId && openaiOptions.length > 0 ? [{ value: 'openai' as ModelProviderId, label: 'OpenAI' }] : []),
             ];
             const geminiSourceId = value.startsWith('gemini.')
               ? value
               : (geminiOptions[0]?.sourceId || GEMINI_ROLE_SOURCE_OPTIONS[role][0]);
             const selectedModelValue = selectedProvider === 'volcengine'
               ? (resolveModelSource(apiSettings, volcengineSourceId) || volcengineOptions[0]?.value || '')
-              : (resolveModelSource(apiSettings, geminiSourceId) || geminiOptions[0]?.modelName || '');
+              : selectedProvider === 'openai' && openaiSourceId
+                ? (resolveModelSource(apiSettings, openaiSourceId) || openaiOptions[0]?.value || '')
+                : (resolveModelSource(apiSettings, geminiSourceId) || geminiOptions[0]?.modelName || '');
 
             return (
               <div key={role} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
@@ -292,13 +343,34 @@ export function ApiConfigPage({
                   <StudioSelect
                     value={selectedProvider}
                     onChange={(event) => {
-                      const provider = event.target.value as 'gemini' | 'volcengine';
+                      const provider = event.target.value as ModelProviderId;
                       if (provider === 'volcengine') {
                         setApiSettings((prev) => ({
                           ...prev,
                           defaultModels: {
                             ...prev.defaultModels,
                             [role]: VOLCENGINE_ROLE_SOURCE_IDS[role],
+                          },
+                        }));
+                        return;
+                      }
+
+                      if (provider === 'openai') {
+                        const nextOpenAIOption = getOpenAIRoleModelOptions(role)[0];
+                        const nextOpenAISourceId = OPENAI_ROLE_SOURCE_IDS[role];
+                        if (!nextOpenAIOption || !nextOpenAISourceId) {
+                          return;
+                        }
+
+                        setApiSettings((prev) => ({
+                          ...prev,
+                          openai: {
+                            ...prev.openai,
+                            imageModel: nextOpenAIOption.value,
+                          },
+                          defaultModels: {
+                            ...prev.defaultModels,
+                            [role]: nextOpenAISourceId,
                           },
                         }));
                         return;
@@ -350,6 +422,21 @@ export function ApiConfigPage({
                       return;
                     }
 
+                    if (selectedProvider === 'openai' && openaiSourceId) {
+                      setApiSettings((prev) => ({
+                        ...prev,
+                        openai: {
+                          ...prev.openai,
+                          imageModel: nextValue,
+                        },
+                        defaultModels: {
+                          ...prev.defaultModels,
+                          [role]: openaiSourceId,
+                        },
+                      }));
+                      return;
+                    }
+
                     const nextGeminiOption = geminiOptions.find((option) => option.modelName === nextValue);
                     setApiSettings((prev) => ({
                       ...prev,
@@ -370,6 +457,16 @@ export function ApiConfigPage({
                       <option value="">请先填写可用模型</option>
                     ) : (
                       volcengineOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))
+                    )
+                  ) : selectedProvider === 'openai' ? (
+                    openaiOptions.length === 0 ? (
+                      <option value="">请先填写可用模型</option>
+                    ) : (
+                      openaiOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
@@ -522,13 +619,23 @@ export function ApiConfigPage({
       ) : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {(['gemini', 'volcengine'] as ModelProviderId[]).map((providerId) => {
+            {(['gemini', 'volcengine', 'openai'] as ModelProviderId[]).map((providerId) => {
           const isVolcengine = providerId === 'volcengine';
+          const isOpenAI = providerId === 'openai';
           const meta = PROVIDER_CARD_META[providerId];
-          const modelFieldGroups = providerId === 'gemini' ? GEMINI_PROVIDER_MODEL_FIELDS : VOLCENGINE_PROVIDER_MODEL_FIELDS;
+          const modelFieldGroups = providerId === 'gemini'
+            ? GEMINI_PROVIDER_MODEL_FIELDS
+            : providerId === 'openai'
+              ? OPENAI_PROVIDER_MODEL_FIELDS
+              : VOLCENGINE_PROVIDER_MODEL_FIELDS;
           const promptLanguageCatalog = getProviderPromptLanguageCatalog(providerId);
-          const currentPromptLanguage = isVolcengine ? apiSettings.volcengine.promptLanguage : apiSettings.gemini.promptLanguage;
+          const currentPromptLanguage = isVolcengine
+            ? apiSettings.volcengine.promptLanguage
+            : isOpenAI
+              ? apiSettings.openai.promptLanguage
+              : apiSettings.gemini.promptLanguage;
           const customModels = getProviderCustomModels(apiSettings, providerId);
+          const visibleRoles = MODEL_ROLE_ORDER.filter((role) => modelFieldGroups[role].length > 0);
 
           return (
             <section key={providerId} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
@@ -555,6 +662,10 @@ export function ApiConfigPage({
                             setApiSettings((prev) => ({ ...prev, volcengine: { ...prev.volcengine, promptLanguage: language } }));
                             return;
                           }
+                          if (isOpenAI) {
+                            setApiSettings((prev) => ({ ...prev, openai: { ...prev.openai, promptLanguage: language } }));
+                            return;
+                          }
                           setApiSettings((prev) => ({ ...prev, gemini: { ...prev.gemini, promptLanguage: language } }));
                         }}
                         className={`h-8 w-10 rounded-md text-base leading-none transition-colors ${currentPromptLanguage === language
@@ -574,21 +685,25 @@ export function ApiConfigPage({
                   <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Key</span>
                   <input
                     type="password"
-                    value={isVolcengine ? apiSettings.volcengine.apiKey : apiSettings.gemini.apiKey}
+                    value={isVolcengine ? apiSettings.volcengine.apiKey : isOpenAI ? apiSettings.openai.apiKey : apiSettings.gemini.apiKey}
                     onChange={(event) => {
                       const value = event.target.value;
                       if (isVolcengine) {
                         setApiSettings((prev) => ({ ...prev, volcengine: { ...prev.volcengine, apiKey: value } }));
                         return;
                       }
+                      if (isOpenAI) {
+                        setApiSettings((prev) => ({ ...prev, openai: { ...prev.openai, apiKey: value } }));
+                        return;
+                      }
                       setApiSettings((prev) => ({ ...prev, gemini: { ...prev.gemini, apiKey: value } }));
                     }}
-                    placeholder={isVolcengine ? '按方舟 API Key 填写' : '留空则继续使用 AI Studio Key 或 GEMINI_API_KEY'}
+                    placeholder={isVolcengine ? '按方舟 API Key 填写' : isOpenAI ? '填写 OpenAI API Key' : '留空则继续使用 AI Studio Key 或 GEMINI_API_KEY'}
                     className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   />
                 </label>
 
-                {!isVolcengine && (
+                {!isVolcengine && !isOpenAI && (
                   <label className="block">
                     <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Base URL / 第三方 Endpoint</span>
                     <input
@@ -605,6 +720,27 @@ export function ApiConfigPage({
                     />
                     <p className="mt-2 text-xs leading-5 text-zinc-500">
                       默认走官方地址 {DEFAULT_GEMINI_BASE_URL}。如果填写第三方兼容网关，将优先使用该地址；请填写服务根地址，不需要包含 /v1beta。
+                    </p>
+                  </label>
+                )}
+
+                {isOpenAI && (
+                  <label className="block">
+                    <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Base URL / 第三方 Endpoint</span>
+                    <input
+                      value={apiSettings.openai.baseUrl}
+                      onChange={(event) => setApiSettings((prev) => ({
+                        ...prev,
+                        openai: {
+                          ...prev.openai,
+                          baseUrl: event.target.value,
+                        },
+                      }))}
+                      placeholder={DEFAULT_OPENAI_BASE_URL}
+                      className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                    />
+                    <p className="mt-2 text-xs leading-5 text-zinc-500">
+                      默认走官方地址 {DEFAULT_OPENAI_BASE_URL}。也可以填写自定义 OpenAI 兼容 Endpoint，图片请求会经本地 bridge 转发。
                     </p>
                   </label>
                 )}
@@ -631,7 +767,7 @@ export function ApiConfigPage({
                 )}
 
                 <div className="space-y-3">
-                  {MODEL_ROLE_ORDER.map((role) => (
+                  {visibleRoles.map((role) => (
                     <div key={`${providerId}-${role}`} className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
                       <div className="mb-3">
                         <p className="text-xs font-semibold text-zinc-300">{DEFAULT_MODEL_ROLE_META[role].title}</p>
@@ -640,7 +776,9 @@ export function ApiConfigPage({
                         {modelFieldGroups[role].map((fieldConfig) => {
                           const configuredValue = providerId === 'gemini'
                             ? apiSettings.gemini[fieldConfig.field as GeminiModelField]
-                            : apiSettings.volcengine[fieldConfig.field as VolcengineModelField];
+                            : providerId === 'openai'
+                              ? apiSettings.openai[fieldConfig.field as OpenAIModelField]
+                              : apiSettings.volcengine[fieldConfig.field as VolcengineModelField];
                           const options = getProviderRoleCatalogOptions(apiSettings, providerId, role, configuredValue);
                           const selectedValue = configuredValue || options[0]?.value || '';
 
@@ -653,6 +791,18 @@ export function ApiConfigPage({
                                   const nextValue = event.target.value;
                                   if (providerId === 'gemini') {
                                     updateGeminiRoleModel(role, nextValue);
+                                    return;
+                                  }
+
+                                  if (providerId === 'openai') {
+                                    const field = fieldConfig.field as OpenAIModelField;
+                                    setApiSettings((prev) => ({
+                                      ...prev,
+                                      openai: {
+                                        ...prev.openai,
+                                        [field]: nextValue,
+                                      },
+                                    }));
                                     return;
                                   }
 
@@ -1067,6 +1217,8 @@ export function ApiConfigPage({
                     <span className="text-[10px] px-2 py-1 rounded-full border border-zinc-700 text-zinc-400">
                       {log.provider === 'volcengine'
                         ? '火山引擎'
+                        : log.provider === 'openai'
+                          ? 'OpenAI'
                         : log.provider === 'seedance-ark'
                           ? 'Ark API'
                           : log.provider === 'seedance-cli'
@@ -1155,7 +1307,7 @@ export function ApiConfigPage({
                 }}
                 className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
               >
-                {MODEL_ROLE_ORDER.map((role) => (
+                {MODEL_ROLE_ORDER.filter((role) => customModelDraft.providerId !== 'openai' || role === 'image').map((role) => (
                   <option key={`custom-model-role-${role}`} value={role}>
                     {DEFAULT_MODEL_ROLE_META[role].title}
                   </option>

@@ -2,7 +2,7 @@ import { Image as ImageIcon, RefreshCw, Upload, Video } from 'lucide-react';
 
 import { StudioMetricCard, StudioPage, StudioPageHeader, StudioPanel } from '../../../components/studio/StudioPrimitives.tsx';
 import type { AssetLibraryConfig } from '../../../services/assetLibrary.ts';
-import type { ProjectType } from '../../../types.ts';
+import type { LibraryAssetSourceType } from '../utils/assetLibraryItems.ts';
 
 type AssetLibraryStatusItem = {
   id: string;
@@ -10,7 +10,7 @@ type AssetLibraryStatusItem = {
   url: string;
   projectId: string;
   projectName: string;
-  projectType: ProjectType;
+  projectType: LibraryAssetSourceType;
   groupName: string;
   title: string;
   sourceLabel: string;

@@ -111,6 +111,15 @@ export interface VolcengineApiConfig {
   customModels: CustomProviderModelConfig[];
 }
 
+export interface OpenAIApiConfig {
+  enabled: boolean;
+  apiKey: string;
+  baseUrl: string;
+  promptLanguage: PromptLanguage;
+  imageModel: string;
+  customModels: CustomProviderModelConfig[];
+}
+
 export interface SeedanceApiConfig {
   enabled: boolean;
   apiModel: string;
@@ -147,6 +156,7 @@ export type ModelSourceId =
   | 'volcengine.textModel'
   | 'volcengine.imageModel'
   | 'volcengine.videoModel'
+  | 'openai.imageModel'
   | 'seedance.apiModel'
   | 'seedance.fastApiModel';
 
@@ -169,6 +179,7 @@ export interface TosConfig {
 export interface ApiSettings {
   gemini: GeminiApiConfig;
   volcengine: VolcengineApiConfig;
+  openai: OpenAIApiConfig;
   seedance: SeedanceApiConfig;
   mockApi: MockApiConfig;
   tos?: TosConfig;

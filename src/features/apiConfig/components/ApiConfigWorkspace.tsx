@@ -27,6 +27,7 @@ type ApiConfigWorkspaceProps = {
   getSourceProviderKey: (sourceId: ModelSourceId) => ModelProviderId;
   getGeminiRoleModelOptions: (role: ModelRole) => Array<{ value: string; sourceId: ModelSourceId; modelName: string; label: string }>;
   getVolcengineRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
+  getOpenAIRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
   getProviderRoleCatalogOptions: (apiSettings: ApiSettings, providerId: ModelProviderId, role: ModelRole, configuredValue: string) => Array<{ value: string; label: string }>;
   updateGeminiRoleModel: (role: ModelRole, modelId: string) => void;
 };
@@ -50,6 +51,7 @@ export function ApiConfigWorkspace({
   getSourceProviderKey,
   getGeminiRoleModelOptions,
   getVolcengineRoleModelOptions,
+  getOpenAIRoleModelOptions,
   getProviderRoleCatalogOptions,
   updateGeminiRoleModel,
 }: ApiConfigWorkspaceProps) {
@@ -78,6 +80,7 @@ export function ApiConfigWorkspace({
       getSourceProviderKey={getSourceProviderKey}
       getGeminiRoleModelOptions={getGeminiRoleModelOptions}
       getVolcengineRoleModelOptions={getVolcengineRoleModelOptions}
+      getOpenAIRoleModelOptions={getOpenAIRoleModelOptions}
       getProviderRoleCatalogOptions={getProviderRoleCatalogOptions}
       updateGeminiRoleModel={updateGeminiRoleModel}
     />

@@ -3,6 +3,7 @@ import type { ModelProviderId, ModelRole } from '../../../services/apiConfig.ts'
 
 export type GeminiModelField = 'textModel' | 'imageModel' | 'proImageModel' | 'fastVideoModel' | 'proVideoModel';
 export type VolcengineModelField = 'textModel' | 'imageModel' | 'videoModel';
+export type OpenAIModelField = 'imageModel';
 
 export const MODEL_ROLE_ORDER: ModelRole[] = ['text', 'image', 'video'];
 
@@ -16,6 +17,10 @@ export const VOLCENGINE_ROLE_SOURCE_IDS: Record<ModelRole, ModelSourceId> = {
   text: 'volcengine.textModel',
   image: 'volcengine.imageModel',
   video: 'volcengine.videoModel',
+};
+
+export const OPENAI_ROLE_SOURCE_IDS: Partial<Record<ModelRole, ModelSourceId>> = {
+  image: 'openai.imageModel',
 };
 
 export const GEMINI_ROLE_FIELDS: Record<ModelRole, GeminiModelField> = {
@@ -54,12 +59,23 @@ export const VOLCENGINE_PROVIDER_MODEL_FIELDS: Record<ModelRole, Array<{ field: 
   ],
 };
 
+export const OPENAI_PROVIDER_MODEL_FIELDS: Record<ModelRole, Array<{ field: OpenAIModelField; sourceId: ModelSourceId; label: string }>> = {
+  text: [],
+  image: [
+    { field: 'imageModel', sourceId: 'openai.imageModel', label: '图像模型' },
+  ],
+  video: [],
+};
+
 export const PROVIDER_CARD_META: Record<ModelProviderId, { title: string }> = {
   gemini: {
     title: 'Google Gemini API',
   },
   volcengine: {
     title: '字节火山引擎 API',
+  },
+  openai: {
+    title: 'OpenAI API',
   },
 };
 

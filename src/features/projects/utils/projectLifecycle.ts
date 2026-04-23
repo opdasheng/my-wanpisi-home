@@ -46,6 +46,7 @@ export function createEmptyProject(projectType: ProjectType = 'creative-video'):
 
 export function isProjectDetailView(view: WorkspaceView) {
   return view !== 'home'
+    && view !== 'imageCreation'
     && view !== 'assetLibrary'
     && view !== 'portraitLibrary'
     && view !== 'cliQueue'

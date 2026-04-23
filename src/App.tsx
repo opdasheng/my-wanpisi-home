@@ -12,7 +12,7 @@ import {
   restoreMockApiSettings,
   type MockApiServerStatus,
 } from './services/mockApiConfig.ts';
-import { collectProjectGeneratedImageAssets, collectProjectGeneratedMediaAssets, getProjectGroupImageAssets, getProjectGroupSummary, type ProjectGroupImageAsset, type ProjectGroupMediaAsset, type ProjectGroupSummary } from './services/projectGroups.ts';
+import { collectProjectGeneratedImageAssets, collectProjectGeneratedMediaAssets, getProjectGroupImageAssets, getProjectGroupSummary, normalizeProjectGroupName, type ProjectGroupImageAsset, type ProjectGroupMediaAsset, type ProjectGroupSummary } from './services/projectGroups.ts';
 import { applyStyleGuideToPrompt, buildStyleGuideText, findStylePresetById, getStylePresets, matchStylePreset } from './services/styleCatalog';
 import { FastFlowWorkspace } from './features/fastVideoFlow/components/FastFlowWorkspace.tsx';
 import { SeedanceCliQueueWorkspace } from './features/fastVideoFlow/components/SeedanceCliQueueWorkspace.tsx';
@@ -37,7 +37,13 @@ import { useProjectStorage } from './features/projects/hooks/useProjectStorage.t
 import { createEmptyProject, isProjectDetailView, isProjectEmpty } from './features/projects/utils/projectLifecycle.ts';
 import { normalizeProjectRecord, toProjectListEntry, upsertProjectListEntry } from './features/projects/utils/projectRecords.ts';
 import { useAssetLibraryState } from './features/assetLibrary/hooks/useAssetLibraryState.ts';
-import { applyLibraryItemUrlToProject, buildAssetLibraryStatusItems, countProjectMediaItems, type AssetLibraryStatusItem } from './features/assetLibrary/utils/assetLibraryItems.ts';
+import { applyLibraryItemUrlToImageCreationRecord, applyLibraryItemUrlToProject, buildAssetLibraryStatusItems, countProjectMediaItems, type AssetLibraryStatusItem } from './features/assetLibrary/utils/assetLibraryItems.ts';
+import { ImageCreationWorkspace } from './features/imageCreation/components/ImageCreationWorkspace.tsx';
+import { useImageCreationRecords } from './features/imageCreation/hooks/useImageCreationRecords.ts';
+import { generateOpenAIImages } from './services/openaiImageService.ts';
+import { saveMediaToAssetLibrary } from './services/assetLibrary.ts';
+import { collectImageCreationGeneratedImageAssets } from './features/imageCreation/utils/imageCreationAssets.ts';
+import type { ImageCreationDraft, ImageCreationGroupOption, ImageCreationRecord } from './features/imageCreation/types.ts';
 import { ProjectDetailPageActions } from './features/app/components/ProjectDetailPageActions.tsx';
 import { ProjectOverviewWorkspace } from './features/app/components/ProjectOverviewWorkspace.tsx';
 import { useModelInvocationLogs } from './features/app/hooks/useModelInvocationLogs.ts';
@@ -69,7 +75,7 @@ import {
   type GeminiModelField,
   type VolcengineModelField,
 } from './features/apiConfig/utils/apiConfigUi.ts';
-import { clearModelInvocationLogs } from './services/modelInvocationLog.ts';
+import { appendModelInvocationLog, clearModelInvocationLogs } from './services/modelInvocationLog.ts';
 import {
   ASPECT_RATIO_OPTIONS,
   ASSET_TYPE_LABELS,
@@ -92,6 +98,7 @@ import { useOperationRegistry } from './features/app/hooks/useOperationRegistry.
 import { downloadMedia } from './features/app/utils/downloadMedia.ts';
 import {
   getGeminiRoleModelOptions,
+  getOpenAIRoleModelOptions,
   getPromptLanguageBySourceId,
   getProviderRoleCatalogOptions,
   getSourceProviderKey,
@@ -235,14 +242,18 @@ export default function App() {
     projectPersistDelayMs: PROJECT_PERSIST_DELAY_MS,
     suspendPersistence: isReinitializingAppDatabase,
   });
-  const shouldComputeProjectGroups = view === 'home' || view === 'groupDetail' || createProjectDraft !== null;
+  const { records: imageCreationRecords, setRecords: setImageCreationRecords } = useImageCreationRecords(isReinitializingAppDatabase);
+  const [isGeneratingImageCreation, setIsGeneratingImageCreation] = useState(false);
+  const [imageCreationError, setImageCreationError] = useState('');
+  const shouldComputeProjectGroups = view === 'home' || view === 'groupDetail' || view === 'imageCreation' || createProjectDraft !== null;
   const projectGroups = shouldComputeProjectGroups ? getProjectGroupSummary(projects) : EMPTY_PROJECT_GROUPS;
-  const projectMediaCounts = countProjectMediaItems(projects);
+  const imageCreationImageAssets = collectImageCreationGeneratedImageAssets(imageCreationRecords);
+  const projectMediaCounts = countProjectMediaItems(projects, imageCreationRecords);
   const shouldComputeAssetLibraryItems = view === 'assetLibrary';
   const assetLibrarySourceProjects = shouldComputeAssetLibraryItems
     ? Array.from(new Map([...projects, project].map((candidate) => [candidate.id, candidate])).values())
     : projects;
-  const assetLibraryItems = shouldComputeAssetLibraryItems ? buildAssetLibraryStatusItems(assetLibrarySourceProjects) : EMPTY_ASSET_LIBRARY_ITEMS;
+  const assetLibraryItems = shouldComputeAssetLibraryItems ? buildAssetLibraryStatusItems(assetLibrarySourceProjects, imageCreationRecords) : EMPTY_ASSET_LIBRARY_ITEMS;
   const libraryImageItems = shouldComputeAssetLibraryItems ? assetLibraryItems.filter((item) => item.kind === 'image') : EMPTY_ASSET_LIBRARY_ITEMS;
   const libraryVideoItems = shouldComputeAssetLibraryItems ? assetLibraryItems.filter((item) => item.kind === 'video') : EMPTY_ASSET_LIBRARY_ITEMS;
   const savedAssetLibraryCount = shouldComputeAssetLibraryItems ? assetLibraryItems.filter((item) => item.savedToLibrary).length : 0;
@@ -250,7 +261,10 @@ export default function App() {
   const shouldComputeCurrentGroupImageAssets = project.projectType === 'creative-video'
     && Boolean(project.groupId);
   const currentGroupImageAssets = shouldComputeCurrentGroupImageAssets
-    ? getProjectGroupImageAssets(project.groupId || '', projects)
+    ? [
+      ...getProjectGroupImageAssets(project.groupId || '', projects),
+      ...imageCreationImageAssets.filter((item) => item.groupId === project.groupId),
+    ]
     : EMPTY_PROJECT_GROUP_IMAGE_ASSETS;
   const shouldComputeFastHistoryImageAssets = view === 'fastInput';
   const fastHistorySourceProjects = shouldComputeFastHistoryImageAssets
@@ -259,6 +273,7 @@ export default function App() {
   const fastHistoryImageAssets = shouldComputeFastHistoryImageAssets
     ? fastHistorySourceProjects
       .flatMap((candidate) => collectProjectGeneratedImageAssets(candidate))
+      .concat(imageCreationImageAssets)
       .filter((item) => item.imageUrl.trim())
       .sort((left, right) => {
         const currentGroupId = project.groupId || '';
@@ -277,6 +292,7 @@ export default function App() {
         return `${left.projectName}${left.title}`.localeCompare(`${right.projectName}${right.title}`, 'zh-Hans-CN');
       })
     : EMPTY_PROJECT_GROUP_IMAGE_ASSETS;
+
   const fastHistoryProjectById = new Map<string, Project>(fastHistorySourceProjects.map((candidate) => [candidate.id, candidate]));
   const fastHistoryMediaAssets = shouldComputeFastHistoryImageAssets
     ? [
@@ -466,6 +482,9 @@ export default function App() {
     useMockMode,
     assetLibraryItems,
     applyLibraryItemToProjectRecord: (projectId, itemId, nextUrl) => {
+      setImageCreationRecords((prev) => prev.map((record) => record.id === projectId
+        ? applyLibraryItemUrlToImageCreationRecord(record, itemId, nextUrl)
+        : record));
       updateProjectRecord(projectId, (current) => applyLibraryItemUrlToProject(current, itemId, nextUrl));
     },
   });
@@ -944,7 +963,7 @@ export default function App() {
     }
   };
 
-  const handleNavigatePrimaryView = (targetView: 'home' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue') => {
+  const handleNavigatePrimaryView = (targetView: 'home' | 'imageCreation' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue') => {
     setSelectedGroupId(null);
 
     if (targetView === 'home') {
@@ -1043,6 +1062,165 @@ export default function App() {
 
   const { draftIssues } = getFastVideoDraftState(project);
   const currentSurfaceMeta = getWorkspaceSurfaceMeta(view, project);
+  const imageCreationGroupOptionMap = new Map<string, ImageCreationGroupOption>();
+  projectGroups.forEach((group) => imageCreationGroupOptionMap.set(group.id, { id: group.id, name: group.name }));
+  imageCreationRecords.forEach((record) => imageCreationGroupOptionMap.set(record.groupId, { id: record.groupId, name: record.groupName }));
+  const imageCreationGroupOptions = Array.from(imageCreationGroupOptionMap.values())
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+  const imageCreationReferenceImages = [
+    ...projects.flatMap((candidate) => collectProjectGeneratedImageAssets(candidate)),
+    ...imageCreationImageAssets,
+  ]
+    .filter((item) => item.imageUrl.trim())
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.imageUrl === item.imageUrl) === index)
+    .sort((left, right) => `${left.projectName}${left.title}`.localeCompare(`${right.projectName}${right.title}`, 'zh-Hans-CN'));
+
+  const handleGenerateImageCreation = async (draft: ImageCreationDraft) => {
+    if (isGeneratingImageCreation) {
+      return;
+    }
+
+    const prompt = draft.prompt.trim();
+    if (!prompt) {
+      setImageCreationError('请先填写图片提示词。');
+      return;
+    }
+
+    const selectedGroup = imageCreationGroupOptions.find((group) => group.id === draft.existingGroupId);
+    const groupId = draft.groupMode === 'existing' && selectedGroup ? selectedGroup.id : crypto.randomUUID();
+    const groupName = draft.groupMode === 'existing' && selectedGroup
+      ? selectedGroup.name
+      : normalizeProjectGroupName(draft.newGroupName) || '未分组';
+    const recordId = crypto.randomUUID();
+    const title = draft.title.trim() || prompt.replace(/\s+/gu, ' ').trim().slice(0, 24) || '图片制作';
+    const model = apiSettings.openai.imageModel || 'gpt-image-2';
+
+    setIsGeneratingImageCreation(true);
+    setImageCreationError('');
+
+    try {
+      const openAIRequest = {
+        model,
+        prompt,
+        size: draft.size,
+        quality: draft.quality,
+        outputFormat: draft.outputFormat,
+        outputCompression: draft.outputFormat === 'jpeg' || draft.outputFormat === 'webp' ? draft.outputCompression : undefined,
+        moderation: draft.moderation,
+        n: draft.n,
+        referenceCount: draft.references.length,
+        groupId,
+        groupName,
+        title,
+      };
+      const openAIStartedAt = Date.now();
+      let result;
+
+      try {
+        result = await generateOpenAIImages({
+          prompt,
+          modelName: model,
+          size: draft.size,
+          quality: draft.quality,
+          outputFormat: draft.outputFormat,
+          outputCompression: draft.outputCompression,
+          moderation: draft.moderation,
+          n: draft.n,
+          references: draft.references.map((reference) => ({
+            sourceUrl: reference.sourceUrl,
+            fileName: reference.fileName || reference.title,
+          })),
+          apiSettings,
+        });
+
+        appendModelInvocationLog({
+          provider: 'openai',
+          operation: 'openaiImageGeneration',
+          status: 'success',
+          sourceId: 'openai.imageModel',
+          modelName: model,
+          request: openAIRequest,
+          response: {
+            durationMs: Date.now() - openAIStartedAt,
+            imageCount: result.images.length,
+            raw: result.raw,
+          },
+        });
+      } catch (openAIError) {
+        appendModelInvocationLog({
+          provider: 'openai',
+          operation: 'openaiImageGeneration',
+          status: 'error',
+          sourceId: 'openai.imageModel',
+          modelName: model,
+          request: openAIRequest,
+          response: {
+            durationMs: Date.now() - openAIStartedAt,
+          },
+          error: openAIError instanceof Error ? openAIError.message : String(openAIError),
+        });
+        throw openAIError;
+      }
+
+      const createdAt = new Date().toISOString();
+      const outputs = [];
+      for (let index = 0; index < result.images.length; index += 1) {
+        const outputId = crypto.randomUUID();
+        const outputTitle = `${title} ${index + 1}`;
+        const savedFile = await saveMediaToAssetLibrary({
+          sourceUrl: result.images[index],
+          kind: 'image',
+          assetId: `${recordId}:image:${outputId}`,
+          title: outputTitle,
+          groupName,
+          projectName: title,
+          fileNameHint: `${outputTitle}.${draft.outputFormat === 'jpeg' ? 'jpg' : draft.outputFormat}`,
+          baseUrl: apiSettings.seedance.bridgeUrl,
+        });
+        outputs.push({
+          id: outputId,
+          title: outputTitle,
+          url: savedFile.url,
+          savedRelativePath: savedFile.relativePath,
+          createdAt,
+        });
+      }
+
+      const record: ImageCreationRecord = {
+        id: recordId,
+        groupId,
+        groupName,
+        title,
+        prompt,
+        provider: 'openai',
+        model,
+        createdAt,
+        request: {
+          size: draft.size,
+          quality: draft.quality,
+          outputFormat: draft.outputFormat,
+          outputCompression: draft.outputFormat === 'jpeg' || draft.outputFormat === 'webp' ? draft.outputCompression : undefined,
+          moderation: draft.moderation,
+          n: result.images.length,
+          referenceImageUrls: draft.references.map((reference) => reference.sourceUrl),
+        },
+        outputs,
+      };
+
+      setImageCreationRecords((prev) => [record, ...prev]);
+      if (outputs[0]?.url) {
+        setPreviewImage(outputs[0].url);
+      }
+      return record;
+    } catch (error) {
+      console.error('Failed to generate OpenAI image:', error);
+      setImageCreationError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setIsGeneratingImageCreation(false);
+    }
+  };
+
   const handleInitializeAppDatabase = async () => {
     if (isReinitializingAppDatabase) {
       return;
@@ -1085,10 +1263,24 @@ export default function App() {
         getSourceProviderKey={getSourceProviderKey}
         getGeminiRoleModelOptions={(role) => getGeminiRoleModelOptions(apiSettings, role)}
         getVolcengineRoleModelOptions={(role) => getVolcengineRoleModelOptions(apiSettings, role)}
+        getOpenAIRoleModelOptions={(role) => getOpenAIRoleModelOptions(apiSettings, role)}
         getProviderRoleCatalogOptions={(currentApiSettings, providerId, role, configuredValue) => getProviderRoleCatalogOptions(currentApiSettings, providerId, role, configuredValue)}
         updateGeminiRoleModel={updateGeminiRoleModel}
       />
     )
+    : view === 'imageCreation'
+      ? (
+        <ImageCreationWorkspace
+          records={imageCreationRecords}
+          groupOptions={imageCreationGroupOptions}
+          availableReferenceImages={imageCreationReferenceImages}
+          usdToCnyRate={usdToCnyRate}
+          isGenerating={isGeneratingImageCreation}
+          error={imageCreationError}
+          onGenerate={handleGenerateImageCreation}
+          onPreviewImage={setPreviewImage}
+        />
+      )
     : view === 'cliQueue'
       ? (
         <SeedanceCliQueueWorkspace

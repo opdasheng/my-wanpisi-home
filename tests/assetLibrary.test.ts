@@ -135,3 +135,65 @@ test('asset library includes fast reference videos and writes saved urls back', 
   assert.equal(updatedProject.fastFlow.input.referenceVideos[0].videoUrl, '/api/seedance/assets/file?path=reference.mp4');
   assert.equal(updatedProject.fastFlow.input.referenceVideos[0].videoMeta, null);
 });
+
+test('asset library includes image creation outputs', () => {
+  const project = createProject();
+  const items = buildAssetLibraryStatusItems([project], [{
+    id: 'image-record-1',
+    groupId: 'group-1',
+    groupName: '测试分组',
+    title: '商品主图',
+    prompt: '生成商品主图',
+    provider: 'openai',
+    model: 'gpt-image-2',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    request: {
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      moderation: 'auto',
+      n: 1,
+      referenceImageUrls: [],
+    },
+    outputs: [{
+      id: 'output-1',
+      title: '商品主图 1',
+      url: '/api/seedance/assets/file?path=%E6%B5%8B%E8%AF%95.png',
+      savedRelativePath: '测试.png',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }],
+  }]);
+
+  const imageCreationItem = items.find((item) => item.id === 'image-record-1:image:output-1');
+
+  assert.ok(imageCreationItem);
+  assert.equal(imageCreationItem.kind, 'image');
+  assert.equal(imageCreationItem.projectType, 'image-creation');
+  assert.equal(imageCreationItem.groupName, '测试分组');
+  assert.deepEqual(countProjectMediaItems([project], []), { total: 0, images: 0, videos: 0 });
+  assert.deepEqual(countProjectMediaItems([project], [{
+    id: 'image-record-1',
+    groupId: 'group-1',
+    groupName: '测试分组',
+    title: '商品主图',
+    prompt: '生成商品主图',
+    provider: 'openai',
+    model: 'gpt-image-2',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    request: {
+      size: '1024x1024',
+      quality: 'medium',
+      outputFormat: 'png',
+      moderation: 'auto',
+      n: 1,
+      referenceImageUrls: [],
+    },
+    outputs: [{
+      id: 'output-1',
+      title: '商品主图 1',
+      url: 'https://example.com/image.png',
+      savedRelativePath: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }],
+  }]), { total: 1, images: 1, videos: 0 });
+});

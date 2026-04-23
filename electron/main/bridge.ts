@@ -10,6 +10,7 @@ import { app as electronApp } from 'electron'
 import { createAppStateStore } from '../../server/appStateStore.mjs'
 import { buildAssetLibraryFileName } from '../../server/assetLibraryNaming.mjs'
 import { registerArkAssetOpenApiRoutes } from '../../server/arkAssetOpenApi.mjs'
+import { registerOpenAIImageBridgeRoutes } from '../../server/openaiImageBridgeRoutes.mjs'
 
 const execFileAsync = promisify(execFile)
 const COMMON_CLI_PATH_ENTRIES = [
@@ -399,8 +400,16 @@ export async function startBridge(port = 3210) {
   function inferMimeTypeFromSourceUrl(sourceUrl, kind) {
     try {
       const parsed = new URL(sourceUrl)
-      const inferredType = detectContentType(parsed.pathname)
-      if (inferredType && inferredType !== 'application/octet-stream') return inferredType
+      const candidates = [
+        parsed.pathname,
+        parsed.searchParams.get('path') || '',
+        parsed.searchParams.get('filename') || '',
+        parsed.searchParams.get('fileName') || '',
+      ]
+      for (const candidate of candidates) {
+        const inferredType = detectContentType(candidate)
+        if (inferredType && inferredType !== 'application/octet-stream') return inferredType
+      }
       return kind === 'video'
         ? 'video/mp4'
         : kind === 'audio'
@@ -447,6 +456,32 @@ export async function startBridge(port = 3210) {
     return 'application/octet-stream'
   }
 
+  function isGenericContentType(mimeType) {
+    const normalized = String(mimeType || '').toLowerCase()
+    return !normalized || normalized === 'application/octet-stream' || normalized === 'binary/octet-stream'
+  }
+
+  function detectContentTypeFromBuffer(buffer) {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 4) return ''
+    if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png'
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg'
+    if (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a') return 'image/gif'
+    if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
+    if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') return 'video/mp4'
+    if (buffer.length >= 4 && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) return 'video/webm'
+    if (buffer.subarray(0, 3).toString('ascii') === 'ID3' || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0)) return 'audio/mpeg'
+    if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WAVE') return 'audio/wav'
+    return ''
+  }
+
+  function resolveFetchedMimeType(sourceUrl, kind, responseMimeType, buffer) {
+    const detectedMimeType = detectContentTypeFromBuffer(buffer)
+    if (detectedMimeType) return detectedMimeType
+    const normalizedResponseMimeType = String(responseMimeType || '').trim()
+    if (!isGenericContentType(normalizedResponseMimeType)) return normalizedResponseMimeType
+    return inferMimeTypeFromSourceUrl(sourceUrl, kind)
+  }
+
   function extractBase64Payload(body, kind) {
     const dataUrl = String(body?.dataUrl || '').trim()
     if (dataUrl) {
@@ -476,9 +511,10 @@ export async function startBridge(port = 3210) {
       try {
         const response = await fetch(resolvedSourceUrl)
         if (!response.ok) throw new Error(`读取媒体文件失败 (${response.status})`)
-        const mimeType = String(response.headers.get('content-type') || '').split(';')[0].trim() || inferMimeTypeFromSourceUrl(resolvedSourceUrl, kind)
-        const dataBase64 = Buffer.from(await response.arrayBuffer()).toString('base64')
-        return { mimeType, dataBase64 }
+        const responseMimeType = String(response.headers.get('content-type') || '').split(';')[0].trim()
+        const buffer = Buffer.from(await response.arrayBuffer())
+        const mimeType = resolveFetchedMimeType(resolvedSourceUrl, kind, responseMimeType, buffer)
+        return { mimeType, dataBase64: buffer.toString('base64') }
       } catch (error) {
         throw new Error(`读取媒体文件失败：${normalizeErrorMessage(error)}`)
       }
@@ -663,6 +699,14 @@ export async function startBridge(port = 3210) {
       console.error(`[Bridge] Failed to set state for key "${request.params.key}":`, error)
       response.status(400).json({ error: normalizeErrorMessage(error) })
     }
+  })
+
+  registerOpenAIImageBridgeRoutes(app, {
+    normalizeErrorMessage,
+    resolveAssetPayload,
+    validateAssetMimeType,
+    extractBase64Payload,
+    getMimeExtension,
   })
 
   app.get('/api/seedance/assets/config', async (_request, response) => {

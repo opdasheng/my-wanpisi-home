@@ -409,7 +409,7 @@ export async function uploadVirtualPortraitAsset(params: {
   groupName?: string;
   projectName?: string;
   baseUrl?: string;
-  initialStatusWaitMs?: number;
+  initialStatusWaitMs?: number | null;
   onStatus?: (asset: ArkAsset) => void;
 }) : Promise<UploadVirtualPortraitAssetResult> {
   if (!params.file.type.startsWith('image/')) {
@@ -457,16 +457,20 @@ export async function uploadVirtualPortraitAsset(params: {
   });
 
   let asset = createdAsset;
-  try {
-    asset = await waitForArkAssetStatus({
-      assetId: createdAsset.id,
-      projectName,
-      baseUrl: params.baseUrl,
-      timeoutMs: params.initialStatusWaitMs ?? 20000,
-      onStatus: params.onStatus,
-    });
-  } catch (error) {
-    console.warn('Failed to refresh created Ark asset status:', error);
+  const shouldWaitForInitialStatus = typeof params.initialStatusWaitMs !== 'number' || params.initialStatusWaitMs > 0;
+
+  if (shouldWaitForInitialStatus) {
+    try {
+      asset = await waitForArkAssetStatus({
+        assetId: createdAsset.id,
+        projectName,
+        baseUrl: params.baseUrl,
+        timeoutMs: params.initialStatusWaitMs ?? 20000,
+        onStatus: params.onStatus,
+      });
+    } catch (error) {
+      console.warn('Failed to refresh created Ark asset status:', error);
+    }
   }
 
   return {

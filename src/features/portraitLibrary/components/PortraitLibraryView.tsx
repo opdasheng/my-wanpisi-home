@@ -35,7 +35,6 @@ import {
   createArkAssetGroup,
   deleteArkAsset,
   deleteArkAssetGroup,
-  getArkAsset,
   isArkAssetActiveStatus,
   isArkAssetFailedStatus,
   listArkAssetGroups,
@@ -50,6 +49,7 @@ import { generateStoryboardImage } from '../../../services/volcengineService.ts'
 type PortraitLibraryViewProps = {
   themeMode?: WorkspaceThemeMode;
   isModal?: boolean;
+  selectionMode?: 'seedance' | 'image';
   onSelect?: (
     imgUrl: string,
     assetId: string,
@@ -174,7 +174,155 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: PortraitLibraryViewProps) {
+function buildArkAssetFromVirtualPortraitLibraryAsset(asset: VirtualPortraitLibraryAsset): ArkAsset {
+  return {
+    id: asset.assetId,
+    groupId: asset.groupId,
+    name: asset.description,
+    assetType: 'Image',
+    projectName: asset.projectName || DEFAULT_VIRTUAL_PORTRAIT_PROJECT_NAME,
+    url: asset.sourceUrl || asset.imageUrl,
+    status: normalizeArkAssetStatus(asset.status),
+    createTime: asset.createdAt,
+    updateTime: asset.updatedAt,
+  };
+}
+
+function buildVirtualPortraitPlaceholderGroup(asset: VirtualPortraitLibraryAsset): ArkAssetGroup {
+  const groupName = asset.groupName || '素材资产组合';
+  return {
+    id: asset.groupId || `local-group:${asset.assetId}`,
+    name: groupName,
+    title: groupName,
+    description: '',
+    groupType: 'AIGC',
+    projectName: asset.projectName || DEFAULT_VIRTUAL_PORTRAIT_PROJECT_NAME,
+    createTime: asset.createdAt,
+    updateTime: asset.updatedAt,
+  };
+}
+
+function compareArkAssetsByNewest(left: ArkAsset, right: ArkAsset) {
+  const leftTime = left.createTime || left.updateTime || '';
+  const rightTime = right.createTime || right.updateTime || '';
+  return rightTime.localeCompare(leftTime);
+}
+
+function mergeVirtualPortraitGroupsWithLocalAssets(
+  groups: VirtualPortraitAssetGroupView[],
+  localAssets: VirtualPortraitLibraryAsset[],
+) {
+  const localAssetByAssetId = new Map<string, VirtualPortraitLibraryAsset>();
+  localAssets.forEach((item) => {
+    if (item.assetId) {
+      localAssetByAssetId.set(item.assetId, item);
+    }
+  });
+
+  const groupMap = new Map<string, VirtualPortraitAssetGroupView>();
+  const ensureGroupView = (group: ArkAssetGroup) => {
+    const groupId = String(group.id || '').trim();
+    const existing = groupMap.get(groupId);
+    if (existing) {
+      return existing;
+    }
+
+    const nextGroupView: VirtualPortraitAssetGroupView = {
+      group: { ...group },
+      assets: [],
+      assetCount: 0,
+      coverImageUrl: '',
+    };
+    groupMap.set(groupId, nextGroupView);
+    return nextGroupView;
+  };
+
+  groups.forEach((groupView) => {
+    const nextGroupView = ensureGroupView(groupView.group);
+    nextGroupView.group = { ...nextGroupView.group, ...groupView.group };
+    nextGroupView.coverImageUrl = groupView.coverImageUrl || nextGroupView.coverImageUrl;
+
+    const assetMap = new Map(nextGroupView.assets.map((asset) => [asset.id, asset]));
+    groupView.assets.forEach((asset) => {
+      const localAsset = localAssetByAssetId.get(asset.id);
+      assetMap.set(asset.id, {
+        ...asset,
+        name: asset.name || localAsset?.description || asset.id,
+        groupId: asset.groupId || localAsset?.groupId || '',
+        projectName: asset.projectName || localAsset?.projectName || DEFAULT_VIRTUAL_PORTRAIT_PROJECT_NAME,
+        url: asset.url || localAsset?.sourceUrl || localAsset?.imageUrl || '',
+        status: normalizeArkAssetStatus(asset.status || localAsset?.status),
+        createTime: asset.createTime || localAsset?.createdAt || '',
+        updateTime: asset.updateTime || localAsset?.updatedAt || '',
+      });
+    });
+    nextGroupView.assets = Array.from(assetMap.values());
+  });
+
+  localAssets.forEach((localAsset) => {
+    const placeholderGroup = buildVirtualPortraitPlaceholderGroup(localAsset);
+    const nextGroupView = ensureGroupView(placeholderGroup);
+    nextGroupView.group = {
+      ...placeholderGroup,
+      ...nextGroupView.group,
+      name: nextGroupView.group.name || placeholderGroup.name,
+      title: nextGroupView.group.title || nextGroupView.group.name || placeholderGroup.title,
+      projectName: nextGroupView.group.projectName || placeholderGroup.projectName,
+    };
+
+    const assetMap = new Map(nextGroupView.assets.map((asset) => [asset.id, asset]));
+    const existingAsset = assetMap.get(localAsset.assetId);
+    const localOnlyAsset = buildArkAssetFromVirtualPortraitLibraryAsset(localAsset);
+    assetMap.set(localAsset.assetId, existingAsset
+      ? {
+          ...localOnlyAsset,
+          ...existingAsset,
+          name: existingAsset.name || localOnlyAsset.name,
+          groupId: existingAsset.groupId || localOnlyAsset.groupId,
+          projectName: existingAsset.projectName || localOnlyAsset.projectName,
+          url: existingAsset.url || localOnlyAsset.url,
+          status: normalizeArkAssetStatus(existingAsset.status || localOnlyAsset.status),
+          createTime: existingAsset.createTime || localOnlyAsset.createTime,
+          updateTime: existingAsset.updateTime || localOnlyAsset.updateTime,
+        }
+      : localOnlyAsset);
+    nextGroupView.assets = Array.from(assetMap.values());
+  });
+
+  return Array.from(groupMap.values())
+    .map((groupView) => {
+      const assets = Array.from(new Map(groupView.assets.map((asset) => [asset.id, asset])).values())
+        .sort(compareArkAssetsByNewest);
+      const coverAsset = assets[0] || null;
+      const localCoverAsset = coverAsset ? localAssetByAssetId.get(coverAsset.id) : null;
+
+      return {
+        ...groupView,
+        assets,
+        assetCount: assets.length,
+        coverImageUrl: localCoverAsset?.imageUrl || groupView.coverImageUrl || coverAsset?.url || '',
+      };
+    })
+    .sort((left, right) => {
+      const leftTime = left.group.updateTime || left.group.createTime || '';
+      const rightTime = right.group.updateTime || right.group.createTime || '';
+      return rightTime.localeCompare(leftTime);
+    });
+}
+
+function removeVirtualPortraitAssetFromGroupViews(groups: VirtualPortraitAssetGroupView[], assetId: string) {
+  return groups.map((groupView) => {
+    const assets = groupView.assets.filter((item) => item.id !== assetId);
+    return {
+      ...groupView,
+      assets,
+      assetCount: assets.length,
+      coverImageUrl: assets[0]?.url || '',
+    };
+  });
+}
+
+export function PortraitLibraryView({ themeMode, isModal = false, selectionMode = 'seedance', onSelect }: PortraitLibraryViewProps) {
   const resolvedThemeMode: WorkspaceThemeMode = themeMode
     ?? (typeof document !== 'undefined' && (document.body.classList.contains('theme-light') || document.documentElement.classList.contains('theme-light'))
       ? 'light'
@@ -221,7 +369,6 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
   const [isVirtualGroupModalOpen, setIsVirtualGroupModalOpen] = useState(false);
   const [isCreatingVirtualGroup, setIsCreatingVirtualGroup] = useState(false);
   const [isUploadingVirtualPortraitAsset, setIsUploadingVirtualPortraitAsset] = useState(false);
-  const [isRefreshingVirtualPortraitStatuses, setIsRefreshingVirtualPortraitStatuses] = useState(false);
   const [virtualAssetDetail, setVirtualAssetDetail] = useState<{ asset: ArkAsset; localAsset?: VirtualPortraitLibraryAsset | null } | null>(null);
   const [isConfirmingVirtualAssetDelete, setIsConfirmingVirtualAssetDelete] = useState(false);
   const [deletingVirtualAssetId, setDeletingVirtualAssetId] = useState('');
@@ -275,6 +422,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     try {
       const nextAssets = await fetchVirtualPortraitLibraryAssets();
       setVirtualPortraitAssets(nextAssets);
+      setVirtualPortraitGroups((currentGroups) => mergeVirtualPortraitGroupsWithLocalAssets(currentGroups, nextAssets));
     } catch (loadError: any) {
       console.error('Failed to load virtual portrait library assets:', loadError);
       setVirtualPortraitError(loadError?.message || '加载虚拟人像上传资产失败');
@@ -287,33 +435,73 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     setIsLoadingVirtualPortraitGroups(true);
     setVirtualPortraitError('');
     try {
-      const localAssetByAssetId = new Map<string, VirtualPortraitLibraryAsset>();
-      virtualPortraitAssets.forEach((item) => {
-        if (item.assetId) {
-          localAssetByAssetId.set(item.assetId, item);
-        }
-      });
       const groups = await listArkAssetGroups();
       const nextGroups = await Promise.all(groups.map(async (group) => {
         const assets = await listArkAssets({
           groupId: group.id,
           projectName: group.projectName,
         });
-        const coverAsset = assets[0] || null;
-        const localCoverAsset = coverAsset ? localAssetByAssetId.get(coverAsset.id) : null;
 
         return {
           group,
           assets,
           assetCount: assets.length,
-          coverImageUrl: localCoverAsset?.imageUrl || coverAsset?.url || '',
+          coverImageUrl: assets[0]?.url || '',
         };
       }));
+      const latestAssetByAssetId = new Map<string, ArkAsset>();
+      nextGroups.forEach((groupView) => {
+        groupView.assets.forEach((asset) => {
+          latestAssetByAssetId.set(asset.id, asset);
+        });
+      });
 
-      setVirtualPortraitGroups(nextGroups);
-      if (selectedVirtualPortraitGroupId && !nextGroups.some((item) => item.group.id === selectedVirtualPortraitGroupId)) {
+      let didUpdateLocalAssets = false;
+      const nextLocalAssetsDraft = virtualPortraitAssets.map((item) => {
+        const latest = latestAssetByAssetId.get(item.assetId);
+        if (!latest) {
+          return item;
+        }
+
+        const nextStatus = normalizeArkAssetStatus(latest.status || item.status);
+        const nextSourceUrl = latest.url || item.sourceUrl;
+        const nextGroupId = latest.groupId || item.groupId;
+        const nextProjectName = latest.projectName || item.projectName;
+        const hasChanged = nextStatus !== item.status
+          || nextSourceUrl !== item.sourceUrl
+          || nextGroupId !== item.groupId
+          || nextProjectName !== item.projectName;
+
+        if (!hasChanged) {
+          return item;
+        }
+
+        didUpdateLocalAssets = true;
+        return {
+          ...item,
+          status: nextStatus,
+          sourceUrl: nextSourceUrl,
+          groupId: nextGroupId,
+          projectName: nextProjectName,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+
+      const nextLocalAssets = didUpdateLocalAssets
+        ? await saveVirtualPortraitLibraryAssets(nextLocalAssetsDraft)
+        : virtualPortraitAssets;
+
+      if (didUpdateLocalAssets) {
+        setVirtualPortraitAssets(nextLocalAssets);
+      }
+
+      const mergedGroups = mergeVirtualPortraitGroupsWithLocalAssets(nextGroups, nextLocalAssets);
+
+      setVirtualPortraitGroups(mergedGroups);
+      if (selectedVirtualPortraitGroupId && !mergedGroups.some((item) => item.group.id === selectedVirtualPortraitGroupId)) {
         setSelectedVirtualPortraitGroupId('');
       }
+      setVirtualPortraitFeedback('已手动刷新虚拟人像列表。');
     } catch (loadError: any) {
       console.error('Failed to load virtual portrait asset groups:', loadError);
       setVirtualPortraitError(loadError?.message || '加载虚拟人像资产组合失败');
@@ -386,10 +574,6 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
   }, []);
 
   useEffect(() => {
-    void refreshVirtualPortraitGroups();
-  }, [virtualPortraitAssets]);
-
-  useEffect(() => {
     void refreshSeedreamPortraitAssets();
   }, []);
 
@@ -460,6 +644,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
   const realPortraitCount = realPortraitAssets.length;
   const virtualPortraitCount = virtualPortraitGroups.reduce((total, group) => total + group.assetCount, 0);
   const virtualPortraitGroupCount = virtualPortraitGroups.length;
+  const isLoadingVirtualPortraitLibrary = isLoadingVirtualPortraitAssets || isLoadingVirtualPortraitGroups;
   const seedreamPortraitCount = seedreamPortraitAssets.length;
   const visibleData = filteredData.slice(0, page * ITEMS_PER_PAGE);
   const hasMore = visibleData.length < filteredData.length;
@@ -652,7 +837,15 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       setVirtualPortraitFeedback(`已创建素材资产组合「${group.name || group.title || name}」`);
       setIsVirtualGroupModalOpen(false);
       resetVirtualGroupDraft();
-      await refreshVirtualPortraitGroups();
+      setVirtualPortraitGroups((currentGroups) => [
+        {
+          group,
+          assets: [],
+          assetCount: 0,
+          coverImageUrl: '',
+        },
+        ...currentGroups.filter((item) => item.group.id !== group.id),
+      ]);
       setSelectedVirtualPortraitGroupId(group.id);
     } catch (createError: any) {
       console.error('Failed to create virtual portrait asset group:', createError);
@@ -687,17 +880,14 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     setVirtualPortraitDraftError('');
 
     try {
-      setVirtualPortraitUploadStep('上传图片到 TOS...');
+      setVirtualPortraitUploadStep('上传图片并写入 Ark 素材库...');
       const uploadResult = await uploadVirtualPortraitAsset({
         file,
         description,
         groupId: activeGroup.id,
         groupName,
         projectName,
-        initialStatusWaitMs: 20000,
-        onStatus: (asset) => {
-          setVirtualPortraitUploadStep(`等待 Ark 处理素材...当前状态：${normalizeArkAssetStatus(asset.status)}`);
-        },
+        initialStatusWaitMs: 0,
       });
       setVirtualPortraitUploadStep('保存本地预览...');
 
@@ -727,11 +917,15 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       const nextAssets = await saveVirtualPortraitLibraryAssets([nextAsset, ...virtualPortraitAssets]);
 
       setVirtualPortraitAssets(nextAssets);
+      setVirtualPortraitGroups((currentGroups) => mergeVirtualPortraitGroupsWithLocalAssets(currentGroups, nextAssets));
       setVirtualPortraitError('');
-      setVirtualPortraitFeedback(`已上传虚拟人像资产「${description}」，assetId：${nextAsset.assetId}`);
+      setVirtualPortraitFeedback(
+        isArkAssetActiveStatus(nextAsset.status)
+          ? `已上传虚拟人像资产「${description}」，assetId：${nextAsset.assetId}`
+          : `已上传虚拟人像资产「${description}」，assetId：${nextAsset.assetId}。后续状态请手动刷新。`,
+      );
       setActiveTab('virtualUpload');
       setIsVirtualPortraitModalOpen(false);
-      await refreshVirtualPortraitGroups();
       setSelectedVirtualPortraitGroupId(activeGroup.id);
       resetVirtualPortraitDraft();
     } catch (uploadError: any) {
@@ -740,59 +934,6 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     } finally {
       setIsUploadingVirtualPortraitAsset(false);
       setVirtualPortraitUploadStep('');
-    }
-  };
-
-  const handleRefreshVirtualPortraitStatuses = async (options?: { silent?: boolean }) => {
-    if (virtualPortraitAssets.length === 0) {
-      return;
-    }
-
-    const shouldShowFeedback = !options?.silent;
-    const hasRefreshableAsset = virtualPortraitAssets.some((item) => (
-      item.assetId && !isArkAssetActiveStatus(item.status) && !isArkAssetFailedStatus(item.status)
-    ));
-    if (!hasRefreshableAsset) {
-      return;
-    }
-
-    if (shouldShowFeedback) {
-      setIsRefreshingVirtualPortraitStatuses(true);
-      setVirtualPortraitError('');
-    }
-
-    try {
-      const nextAssets = await Promise.all(virtualPortraitAssets.map(async (item) => {
-        if (!item.assetId || isArkAssetActiveStatus(item.status) || isArkAssetFailedStatus(item.status)) {
-          return item;
-        }
-
-        const latest = await getArkAsset({
-          assetId: item.assetId,
-          projectName: item.projectName,
-        });
-
-        return {
-          ...item,
-          status: normalizeArkAssetStatus(latest.status || item.status),
-          sourceUrl: latest.url || item.sourceUrl,
-          updatedAt: new Date().toISOString(),
-        };
-      }));
-      const saved = await saveVirtualPortraitLibraryAssets(nextAssets);
-      setVirtualPortraitAssets(saved);
-      if (shouldShowFeedback) {
-        setVirtualPortraitFeedback('已刷新虚拟人像资产状态。');
-      }
-    } catch (refreshError: any) {
-      console.error('Failed to refresh virtual portrait asset statuses:', refreshError);
-      if (shouldShowFeedback) {
-        setVirtualPortraitError(refreshError?.message || '刷新虚拟人像资产状态失败。');
-      }
-    } finally {
-      if (shouldShowFeedback) {
-        setIsRefreshingVirtualPortraitStatuses(false);
-      }
     }
   };
 
@@ -818,8 +959,11 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
         virtualPortraitAssets.filter((item) => item.assetId !== assetId),
       );
       setVirtualPortraitAssets(nextLocalAssets);
+      setVirtualPortraitGroups((currentGroups) => mergeVirtualPortraitGroupsWithLocalAssets(
+        removeVirtualPortraitAssetFromGroupViews(currentGroups, assetId),
+        nextLocalAssets,
+      ));
       setVirtualPortraitFeedback('已删除素材资产。');
-      await refreshVirtualPortraitGroups();
       setVirtualAssetDetail(null);
       setIsConfirmingVirtualAssetDelete(false);
     } catch (deleteError: any) {
@@ -855,7 +999,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       if (selectedVirtualPortraitGroupId === group.id) {
         setSelectedVirtualPortraitGroupId('');
       }
-      await refreshVirtualPortraitGroups();
+      setVirtualPortraitGroups((currentGroups) => currentGroups.filter((item) => item.group.id !== group.id));
     } catch (deleteError: any) {
       console.error('Failed to delete virtual portrait asset group:', deleteError);
       setVirtualPortraitError(deleteError?.message || '删除素材资产组合失败。');
@@ -863,33 +1007,6 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
       setDeletingVirtualGroupId('');
     }
   };
-
-  useEffect(() => {
-    const hasPendingAsset = virtualPortraitAssets.some((item) => (
-      item.assetId && !isArkAssetActiveStatus(item.status) && !isArkAssetFailedStatus(item.status)
-    ));
-
-    if (!hasPendingAsset) {
-      return undefined;
-    }
-
-    let isCancelled = false;
-    const refreshPendingAssets = async () => {
-      if (isCancelled) {
-        return;
-      }
-      await handleRefreshVirtualPortraitStatuses({ silent: true });
-    };
-    void refreshPendingAssets();
-    const timer = window.setInterval(() => {
-      void refreshPendingAssets();
-    }, 5000);
-
-    return () => {
-      isCancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [virtualPortraitAssets]);
 
   const resetSeedreamPortraitDraft = () => {
     setSeedreamPortraitDraft(EMPTY_SEEDREAM_PORTRAIT_DRAFT);
@@ -1110,6 +1227,23 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
     return sourceUrl || '';
   };
 
+  const handleSelectPortrait = (
+    imageUrl: string,
+    assetId: string,
+    meta?: { description?: string; submitMode?: 'auto' | 'reference_image' },
+  ) => {
+    if (!onSelect || !imageUrl) {
+      return;
+    }
+
+    if (selectionMode === 'image') {
+      onSelect(imageUrl, '', { ...meta, submitMode: 'reference_image' });
+      return;
+    }
+
+    onSelect(imageUrl, assetId, meta);
+  };
+
   const skeletonClass = resolvedThemeMode === 'light' ? 'bg-stone-200 animate-pulse border-stone-300' : 'bg-zinc-800 animate-pulse border-zinc-700';
   const softPanelClass = resolvedThemeMode === 'light'
     ? 'border-stone-200/80 bg-white/95 text-stone-700'
@@ -1153,7 +1287,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                   : activeTab === 'real'
                     ? isLoadingRealPortraitAssets ? '加载中...' : `真人人像 ${realPortraitCount} 人`
                     : activeTab === 'virtualUpload'
-                      ? isLoadingVirtualPortraitGroups ? '加载中...' : `虚拟组合 ${virtualPortraitGroupCount} 组 / ${virtualPortraitCount} 张`
+                      ? isLoadingVirtualPortraitLibrary ? '加载中...' : `虚拟组合 ${virtualPortraitGroupCount} 组 / ${virtualPortraitCount} 张`
                       : isLoadingSeedreamPortraitAssets ? '加载中...' : `Seedream ${seedreamPortraitCount} 张`}
               </div>
             </div>
@@ -1283,7 +1417,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                       animate={{ opacity: 1, y: 0 }}
                       key={item.AssetGroup.SID}
                       className={`group relative aspect-[3/4] overflow-hidden rounded-xl border bg-[var(--studio-surface-soft)] md:rounded-2xl ${onSelect ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500' : 'border-[var(--studio-border)]'}`}
-                      onClick={onSelect && imageUrl ? () => onSelect(imageUrl, assetId, {
+                      onClick={onSelect && imageUrl ? () => handleSelectPortrait(imageUrl, assetId, {
                         description: item.AssetGroup.Title || item.AssetGroup.Description,
                         submitMode: 'auto',
                       }) : undefined}
@@ -1389,7 +1523,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                         ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500'
                         : 'border-[var(--studio-border)]',
                     )}
-                    onClick={onSelect ? () => onSelect(item.imageUrl, item.assetId, { description: item.description, submitMode: 'auto' }) : undefined}
+                    onClick={onSelect ? () => handleSelectPortrait(item.imageUrl, item.assetId, { description: item.description, submitMode: 'auto' }) : undefined}
                   >
                     <div className="relative aspect-[3/4] overflow-hidden">
                       <img
@@ -1427,6 +1561,9 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                     ? (selectedVirtualPortraitGroup.group.name || selectedVirtualPortraitGroup.group.title || '素材资产组合')
                     : '虚拟人像素材资产组合'}
                 </h2>
+                <p className={`mt-2 text-sm leading-6 ${dimTextClass}`}>
+                  默认只读取本地缓存；只有点击“手动刷新”时才会向 Ark 拉取最新列表和状态。
+                </p>
               </div>
               <div className="flex flex-wrap gap-3">
                 {selectedVirtualPortraitGroup ? (
@@ -1446,7 +1583,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                   className="studio-button studio-button-secondary px-4"
                 >
                   <RefreshCw className={`h-4 w-4 ${isLoadingVirtualPortraitGroups ? 'animate-spin' : ''}`} />
-                  刷新
+                  手动刷新
                 </button>
                 {selectedVirtualPortraitGroup ? (
                   <button
@@ -1499,7 +1636,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
               </StudioPanel>
             ) : null}
 
-            {isLoadingVirtualPortraitGroups ? (
+            {isLoadingVirtualPortraitLibrary ? (
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {Array.from({ length: 10 }).map((_, index) => (
                   <div key={index} className={`relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-2xl border ${skeletonClass}`}>
@@ -1711,7 +1848,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                         ? 'cursor-pointer border-transparent shadow-lg hover:border-sky-500'
                         : 'border-[var(--studio-border)]',
                     )}
-                    onClick={onSelect ? () => onSelect(item.imageUrl, '', { description: item.description, submitMode: 'reference_image' }) : undefined}
+                    onClick={onSelect ? () => handleSelectPortrait(item.imageUrl, '', { description: item.description, submitMode: 'reference_image' }) : undefined}
                   >
                     <div className="relative aspect-video overflow-hidden">
                       <img
@@ -2100,7 +2237,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                 <ul className={`space-y-2 text-sm leading-6 ${dimTextClass}`}>
                   <li>使用 API 配置里的 TOS AccessKey 上传图片并生成公网 URL。</li>
                   <li>素材会写入当前组合，建议同一组合只维护同一个虚拟人物。</li>
-                  <li>CreateAsset 返回 assetId 后保存到本地人像库；状态为 Active 后可用于推理。</li>
+                  <li>CreateAsset 返回 assetId 后只保存本地记录；后续状态需要手动刷新。</li>
                 </ul>
               </StudioPanel>
             </div>
@@ -2292,7 +2429,7 @@ export function PortraitLibraryView({ themeMode, isModal = false, onSelect }: Po
                     <button
                       type="button"
                       onClick={() => {
-                        onSelect(imageUrl, asset.id, { description, submitMode: 'auto' });
+                        handleSelectPortrait(imageUrl, asset.id, { description, submitMode: 'auto' });
                         setVirtualAssetDetail(null);
                       }}
                       className="studio-button studio-button-primary w-full justify-center px-4"

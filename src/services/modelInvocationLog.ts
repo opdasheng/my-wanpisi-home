@@ -4,7 +4,7 @@ import { loadPersistedAppState, savePersistedAppState } from '../features/app/se
 export const MODEL_INVOCATION_LOG_STATE_KEY = 'model_invocation_logs';
 export const MODEL_INVOCATION_LOG_EVENT = 'ai-director-model-log-updated';
 
-export type ModelInvocationProviderId = 'gemini' | 'volcengine' | 'seedance-cli' | 'seedance-ark';
+export type ModelInvocationProviderId = 'gemini' | 'volcengine' | 'openai' | 'seedance-cli' | 'seedance-ark';
 export type ModelInvocationSourceId =
   | ModelSourceId
   | 'seedance.apiModel'

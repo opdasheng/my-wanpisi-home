@@ -17,7 +17,7 @@ import {
   getSeedanceApiModelLabelForSourceId,
   isSeedanceApiModelSourceId,
 } from '../../seedance/modelVersions.ts';
-import { GEMINI_ROLE_SOURCE_OPTIONS, VOLCENGINE_ROLE_SOURCE_IDS } from '../../apiConfig/utils/apiConfigUi.ts';
+import { GEMINI_ROLE_SOURCE_OPTIONS, OPENAI_ROLE_SOURCE_IDS, VOLCENGINE_ROLE_SOURCE_IDS } from '../../apiConfig/utils/apiConfigUi.ts';
 
 export type ModelCategory = 'text' | 'image' | 'video';
 
@@ -51,6 +51,9 @@ type FlowModelOverrideMap = Record<ModelCategory, string>;
 type OperationModelOverrideMap = Record<string, string>;
 
 export function getSourceProviderKey(sourceId: ModelSourceId): ModelProviderId {
+  if (sourceId.startsWith('openai.')) {
+    return 'openai';
+  }
   if (sourceId.startsWith('volcengine.') || sourceId.startsWith('seedance.')) {
     return 'volcengine';
   }
@@ -103,11 +106,13 @@ export function getPromptLanguageBySourceId(apiSettings: ApiSettings, sourceId: 
   const providerId = getSourceProviderKey(sourceId);
   return providerId === 'volcengine'
     ? apiSettings.volcengine.promptLanguage
+    : providerId === 'openai'
+      ? apiSettings.openai.promptLanguage
     : apiSettings.gemini.promptLanguage;
 }
 
 export function encodeSelectionValue(sourceId: ModelSourceId, modelName?: string) {
-  if ((sourceId.startsWith('gemini.') || sourceId.startsWith('volcengine.')) && modelName) {
+  if ((sourceId.startsWith('gemini.') || sourceId.startsWith('volcengine.') || sourceId.startsWith('openai.')) && modelName) {
     return `${sourceId}::${modelName}`;
   }
   return sourceId;
@@ -167,6 +172,34 @@ export function getVolcengineRoleModelOptions(apiSettings: ApiSettings, role: Mo
   return catalogOptions;
 }
 
+export function getOpenAIRoleModelOptions(apiSettings: ApiSettings, role: ModelRole) {
+  const sourceId = OPENAI_ROLE_SOURCE_IDS[role];
+  if (!sourceId) {
+    return [];
+  }
+
+  const configuredValue = resolveModelSource(apiSettings, sourceId);
+  const catalogOptions = getProviderModelCatalog('openai', role, apiSettings).map((model) => ({
+    value: model.modelId,
+    label: [
+      `${model.name} (${model.modelId})`,
+      getModelPricingLabel('openai', role, model.modelId, true),
+    ].filter(Boolean).join(' · '),
+  }));
+
+  if (configuredValue && !catalogOptions.some((option) => option.value === configuredValue)) {
+    return [{
+      value: configuredValue,
+      label: [
+        formatConfiguredModelDisplay('openai', role, configuredValue),
+        getModelPricingLabel('openai', role, configuredValue, true),
+      ].filter(Boolean).join(' · '),
+    }, ...catalogOptions];
+  }
+
+  return catalogOptions;
+}
+
 export function getProviderRoleCatalogOptions(
   apiSettings: ApiSettings,
   providerId: ModelProviderId,
@@ -209,6 +242,16 @@ export function getRoleModelSelectionOptions(apiSettings: ApiSettings, role: Mod
     label: `${option.label} · 火山引擎 Ark`,
   }));
 
+  const openaiSourceId = OPENAI_ROLE_SOURCE_IDS[role];
+  const openaiOptions = openaiSourceId && apiSettings.openai.enabled
+    ? getOpenAIRoleModelOptions(apiSettings, role).map((option) => ({
+      value: encodeSelectionValue(openaiSourceId, option.value),
+      sourceId: openaiSourceId,
+      modelName: option.value,
+      label: `${option.label} · OpenAI`,
+    }))
+    : [];
+
   const seedanceOptions = role === 'video' && apiSettings.seedance.enabled
     ? SEEDANCE_API_MODEL_SOURCE_IDS
       .map((sourceId) => ({
@@ -220,7 +263,7 @@ export function getRoleModelSelectionOptions(apiSettings: ApiSettings, role: Mod
       .filter((option) => option.label !== '未配置' && option.modelName.trim().length > 0)
     : [];
 
-  return [...geminiOptions, ...volcengineOptions, ...seedanceOptions];
+  return [...geminiOptions, ...volcengineOptions, ...openaiOptions, ...seedanceOptions];
 }
 
 export function resolveSelectionValue(apiSettings: ApiSettings, role: ModelRole, selection: string): ResolvedModelSelection | null {

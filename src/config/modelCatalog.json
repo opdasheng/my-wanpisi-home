@@ -138,6 +138,27 @@
           }
         ]
       }
+    },
+    "openai": {
+      "label": "OpenAI",
+      "promptLanguage": {
+        "default": "en",
+        "supported": ["zh", "en"]
+      },
+      "models": {
+        "text": [],
+        "image": [
+          {
+            "name": "GPT Image 2",
+            "modelId": "gpt-image-2",
+            "pricing": {
+              "type": "per_million_tokens",
+              "unitPriceUsd": 30
+            }
+          }
+        ],
+        "video": []
+      }
     }
   }
 }

@@ -17,7 +17,7 @@ export type ProjectGroupImageAsset = {
   groupId: string;
   projectId: string;
   projectName: string;
-  sourceType: 'asset' | 'shot-first' | 'shot-last' | 'ad-storyboard' | 'ad-packaging' | 'ad-logo' | 'fast-reference' | 'fast-scene' | 'fast-task-last-frame';
+  sourceType: 'asset' | 'shot-first' | 'shot-last' | 'ad-storyboard' | 'ad-packaging' | 'ad-logo' | 'fast-reference' | 'fast-scene' | 'fast-task-last-frame' | 'image-creation' | 'portrait-public' | 'portrait-real' | 'portrait-virtual' | 'portrait-seedream';
   title: string;
   sourceLabel: string;
   imageUrl: string;
@@ -34,6 +34,24 @@ export type ProjectGroupMediaAsset = {
   kind: 'image' | 'video' | 'audio';
   url: string;
 };
+
+function getProjectCreatedAtTimestamp(project: Project) {
+  const timestamp = Date.parse(project.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getProjectGroupLatestProjectTimestamp(group: ProjectGroupSummary) {
+  return group.projects.reduce((latest, project) => Math.max(latest, getProjectCreatedAtTimestamp(project)), 0);
+}
+
+function compareProjectGroupsByLatestProjectTime(left: ProjectGroupSummary, right: ProjectGroupSummary) {
+  const latestTimeDiff = getProjectGroupLatestProjectTimestamp(right) - getProjectGroupLatestProjectTimestamp(left);
+  if (latestTimeDiff !== 0) {
+    return latestTimeDiff;
+  }
+
+  return left.name.localeCompare(right.name, 'zh-Hans-CN');
+}
 
 export function normalizeProjectGroupName(groupName?: string) {
   return (groupName || '').trim();
@@ -395,5 +413,5 @@ export function getProjectGroupSummary(
     group.previewImages = group.projects.flatMap((project) => collectProjectPreviewImages(project)).slice(0, 4);
   }
 
-  return Array.from(groups.values()).sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+  return Array.from(groups.values()).sort(compareProjectGroupsByLatestProjectTime);
 }

@@ -371,6 +371,22 @@ export async function startMockApiServer(options = {}) {
     });
   });
 
+  registerJsonRoute(app, 'post', ['/api/seedance/openai/images/generations', '/api/seedance/openai/images/edits'], (request, response) => {
+    const n = Math.max(1, Math.min(4, Math.round(Number(request.body?.request?.n) || 1)));
+    response.json({
+      created: nowUnixSeconds(),
+      model: request.body?.request?.model || 'gpt-image-2',
+      data: Array.from({ length: n }, () => ({
+        b64_json: mockImagePngBase64,
+      })),
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+      },
+    });
+  });
+
   registerJsonRoute(app, 'post', ['/api/v3/contents/generations/tasks', '/contents/generations/tasks'], (request, response) => {
     const baseUrl = `${request.protocol}://${request.get('host')}`;
     const task = createTask('ark', request.body, baseUrl);

@@ -1,6 +1,9 @@
 import { getAssetLibraryRelativePath, isAssetLibraryUrl } from '../../../services/assetLibrary.ts';
 import { ASSET_TYPE_LABELS } from '../../creativeFlow/utils/creativeFlowHelpers.ts';
+import type { ImageCreationRecord } from '../../imageCreation/types.ts';
 import type { Project, ProjectType } from '../../../types.ts';
+
+export type LibraryAssetSourceType = ProjectType | 'image-creation';
 
 export type LibraryAssetItem = {
   id: string;
@@ -8,7 +11,7 @@ export type LibraryAssetItem = {
   url: string;
   projectId: string;
   projectName: string;
-  projectType: ProjectType;
+  projectType: LibraryAssetSourceType;
   groupName: string;
   title: string;
   sourceLabel: string;
@@ -135,7 +138,21 @@ function collectProjectLibraryItems(project: Project): LibraryAssetItem[] {
   return items;
 }
 
-export function countProjectMediaItems(projects: Project[]): ProjectMediaCounts {
+function collectImageCreationLibraryItems(records: ImageCreationRecord[] = []): LibraryAssetItem[] {
+  return records.flatMap((record) => record.outputs.map((output, index) => ({
+    id: `${record.id}:image:${output.id || index}`,
+    kind: 'image' as const,
+    url: output.url,
+    projectId: record.id,
+    projectName: record.title || '图片制作',
+    projectType: 'image-creation' as const,
+    groupName: record.groupName || '未分组',
+    title: output.title || `生成图片 ${index + 1}`,
+    sourceLabel: '图片制作',
+  }))).filter((item) => item.url.trim());
+}
+
+export function countProjectMediaItems(projects: Project[], imageCreationRecords: ImageCreationRecord[] = []): ProjectMediaCounts {
   let images = 0;
   let videos = 0;
 
@@ -167,6 +184,10 @@ export function countProjectMediaItems(projects: Project[]): ProjectMediaCounts 
     countVideo(project.fastFlow.task.videoUrl);
   }
 
+  for (const record of imageCreationRecords) {
+    record.outputs.forEach((output) => countImage(output.url));
+  }
+
   return {
     total: images + videos,
     images,
@@ -174,8 +195,11 @@ export function countProjectMediaItems(projects: Project[]): ProjectMediaCounts 
   };
 }
 
-export function buildAssetLibraryStatusItems(projects: Project[]): AssetLibraryStatusItem[] {
-  return projects.flatMap((project) => collectProjectLibraryItems(project)).map((item) => {
+export function buildAssetLibraryStatusItems(projects: Project[], imageCreationRecords: ImageCreationRecord[] = []): AssetLibraryStatusItem[] {
+  return [
+    ...projects.flatMap((project) => collectProjectLibraryItems(project)),
+    ...collectImageCreationLibraryItems(imageCreationRecords),
+  ].map((item) => {
     const savedRelativePath = getAssetLibraryRelativePath(item.url);
     return {
       ...item,
@@ -303,4 +327,24 @@ export function applyLibraryItemUrlToProject(project: Project, itemId: string, n
   }
 
   return project;
+}
+
+export function applyLibraryItemUrlToImageCreationRecord(record: ImageCreationRecord, itemId: string, nextUrl: string): ImageCreationRecord {
+  if (!itemId.startsWith(`${record.id}:image:`)) {
+    return record;
+  }
+
+  const outputId = itemId.slice(`${record.id}:image:`.length);
+  return {
+    ...record,
+    outputs: record.outputs.map((output, index) => (
+      output.id === outputId || String(index) === outputId
+        ? {
+          ...output,
+          url: nextUrl,
+          savedRelativePath: getAssetLibraryRelativePath(nextUrl),
+        }
+        : output
+    )),
+  };
 }

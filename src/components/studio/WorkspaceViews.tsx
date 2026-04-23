@@ -1,9 +1,14 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import {
+  Activity,
+  Archive,
   ArrowLeft,
+  CircleDollarSign,
   Clapperboard,
+  Database,
   FileText,
   Film,
+  Gauge,
   ListOrdered,
   Image as ImageIcon,
   LayoutDashboard,
@@ -14,6 +19,7 @@ import {
   Settings2,
   Sun,
   Table2,
+  TimerReset,
   Video,
   X,
   Users,
@@ -23,9 +29,11 @@ import {
 import type { Project, ProjectType } from '../../types.ts';
 import { getProjectGroupImageAssets, type ProjectGroupSummary } from '../../services/projectGroups.ts';
 import { StudioMetricCard, StudioModal, StudioPage, StudioPageHeader, StudioPanel, StudioSelect, cx } from './StudioPrimitives.tsx';
+import { buildWorkspaceTelemetry, type WorkspaceTelemetryStats } from '../../features/app/utils/workspaceTelemetry.ts';
 
 export type WorkspaceView =
   | 'home'
+  | 'imageCreation'
   | 'assetLibrary'
   | 'portraitLibrary'
   | 'cliQueue'
@@ -175,9 +183,18 @@ export function getWorkspaceSurfaceMeta(view: WorkspaceView, project: Project): 
         eyebrow: 'Library',
         title: '资产库',
         description: '统一管理图片、视频和可复用素材',
-        icon: ImageIcon,
+        icon: Archive,
         chipClassName: 'studio-accent-chip-cyan',
         badgeLabel: 'Assets',
+      };
+    case 'imageCreation':
+      return {
+        eyebrow: 'Image Creation',
+        title: '图片制作',
+        description: '使用 GPT Image 2 生成可复用图片资产',
+        icon: ImageIcon,
+        chipClassName: 'studio-accent-chip-emerald',
+        badgeLabel: 'Images',
       };
     case 'portraitLibrary':
       return {
@@ -255,7 +272,7 @@ type StudioSidebarProps = {
   themeMode: WorkspaceThemeMode;
   queueCount: number;
   isMockModeEnabled?: boolean;
-  onNavigate: (view: 'home' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue') => void;
+  onNavigate: (view: 'home' | 'imageCreation' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue') => void;
   onThemeModeChange: (mode: WorkspaceThemeMode) => void;
   onOpenApiConfig: () => void;
 };
@@ -271,8 +288,10 @@ export function StudioSidebar({
   onThemeModeChange,
   onOpenApiConfig,
 }: StudioSidebarProps) {
-  const activePrimaryView: 'home' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue' =
-    view === 'assetLibrary'
+  const activePrimaryView: 'home' | 'imageCreation' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue' =
+    view === 'imageCreation'
+      ? 'imageCreation'
+      : view === 'assetLibrary'
       ? 'assetLibrary'
       : view === 'portraitLibrary'
         ? 'portraitLibrary'
@@ -280,7 +299,7 @@ export function StudioSidebar({
           ? 'cliQueue'
           : 'home';
   const primaryNavItems: Array<{
-    view: 'home' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue';
+    view: 'home' | 'imageCreation' | 'assetLibrary' | 'portraitLibrary' | 'cliQueue';
     label: string;
     description: string;
     countLabel: string;
@@ -294,11 +313,18 @@ export function StudioSidebar({
         icon: Clapperboard,
       },
       {
+        view: 'imageCreation',
+        label: '图片制作',
+        description: 'GPT Image 2 生图与参考图',
+        countLabel: 'OpenAI',
+        icon: ImageIcon,
+      },
+      {
         view: 'assetLibrary',
         label: '资产库',
         description: '所有项目中的图片与视频',
         countLabel: `${mediaCount} 项资产`,
-        icon: ImageIcon,
+        icon: Archive,
       },
       {
         view: 'portraitLibrary',
@@ -675,6 +701,152 @@ type HomeWorkspaceProps = {
 
 const HOME_ENTRY_TYPES: SupportedWorkspaceProjectType[] = ['fast-video', 'creative-video'];
 
+type HomeTelemetryTone = 'sky' | 'violet' | 'emerald' | 'amber';
+
+const HOME_TELEMETRY_TONE_CLASS_NAMES: Record<HomeTelemetryTone, {
+  icon: string;
+}> = {
+  sky: {
+    icon: 'border-sky-400/25 bg-sky-400/10 text-sky-200',
+  },
+  violet: {
+    icon: 'border-violet-400/25 bg-violet-400/10 text-violet-200',
+  },
+  emerald: {
+    icon: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200',
+  },
+  amber: {
+    icon: 'border-amber-400/25 bg-amber-400/10 text-amber-200',
+  },
+};
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, value));
+}
+
+function formatTelemetryTokenCount(tokenCount: number) {
+  const safeTokenCount = Math.max(0, tokenCount);
+  if (safeTokenCount >= 1_000_000) {
+    return `${(safeTokenCount / 1_000_000).toFixed(2).replace(/\.00$/u, '')}M`;
+  }
+  if (safeTokenCount >= 1_000) {
+    return `${(safeTokenCount / 1_000).toFixed(1).replace(/\.0$/u, '')}K`;
+  }
+  return `${Math.round(safeTokenCount)}`;
+}
+
+function formatTelemetryCny(amount: number) {
+  const safeAmount = Math.max(0, amount);
+  if (safeAmount >= 1) {
+    return `¥${safeAmount.toFixed(2).replace(/\.00$/u, '').replace(/(\.\d*?[1-9])0+$/u, '$1')}`;
+  }
+  return `¥${safeAmount.toFixed(4).replace(/\.?0+$/u, '') || '0'}`;
+}
+
+function formatTelemetryDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
+function HomeTelemetryMetric({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  tone: HomeTelemetryTone;
+}) {
+  const toneClassNames = HOME_TELEMETRY_TONE_CLASS_NAMES[tone];
+
+  return (
+    <div className="min-w-0 px-3 py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--studio-dim)]" title={label}>
+          {label}
+        </div>
+        <span className={cx('inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border', toneClassNames.icon)}>
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+      </div>
+      <div className="mt-2 truncate text-xl font-semibold leading-none text-[var(--studio-text)]" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function HomeTelemetryDashboard({ stats }: { stats: WorkspaceTelemetryStats }) {
+  const visibleTokens = stats.usedEstimatedTokens > 0 ? stats.usedEstimatedTokens : stats.totalEstimatedTokens;
+  const visibleCost = stats.usedEstimatedCostCny > 0 ? stats.usedEstimatedCostCny : stats.totalEstimatedCostCny;
+  const completionPercent = clampPercent(stats.completionRate * 100);
+
+  return (
+    <div className="min-w-[min(100%,42rem)] max-w-[42rem] rounded-2xl border border-[var(--studio-border)] bg-[linear-gradient(135deg,rgba(255,255,255,0.085),rgba(255,255,255,0.025))] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] backdrop-blur-xl">
+      <div className="grid grid-cols-1 divide-y divide-[var(--studio-border)] sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4">
+        <HomeTelemetryMetric
+          label="项目 / 分组"
+          value={`${stats.projectCount} / ${stats.groupCount}`}
+          icon={Database}
+          tone="sky"
+        />
+        <HomeTelemetryMetric
+          label="Token 用量"
+          value={formatTelemetryTokenCount(visibleTokens)}
+          icon={Activity}
+          tone="violet"
+        />
+        <HomeTelemetryMetric
+          label="消耗金额"
+          value={formatTelemetryCny(visibleCost)}
+          icon={CircleDollarSign}
+          tone="emerald"
+        />
+        <HomeTelemetryMetric
+          label="生成时间"
+          value={formatTelemetryDuration(stats.totalGenerationMs)}
+          icon={TimerReset}
+          tone="amber"
+        />
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-[var(--studio-border)] px-3 pt-3 text-[11px] text-[var(--studio-muted)]">
+        <span className="inline-flex items-center gap-1.5">
+          <Video className="h-3.5 w-3.5 text-sky-300" />
+          视频产物 {stats.generatedVideoCount}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <ImageIcon className="h-3.5 w-3.5 text-emerald-300" />
+          图片资产 {stats.generatedImageCount}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Activity className="h-3.5 w-3.5 text-amber-300" />
+          进行中 {stats.activeFastTaskCount}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Gauge className="h-3.5 w-3.5 text-violet-300" />
+          完成率 {Math.round(completionPercent)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function HomeWorkspace({
   projects,
   projectGroups,
@@ -703,18 +875,14 @@ export function HomeWorkspace({
   const modalGhostHoverClass = themeMode === 'light'
     ? 'hover:bg-[rgba(255,255,255,0.86)]'
     : 'hover:bg-white/6';
+  const telemetryStats = buildWorkspaceTelemetry(projects, projectGroups.length);
 
   return (
     <StudioPage className="studio-page-wide">
       <StudioPageHeader
         eyebrow="Workspace Overview"
         title="视频制作"
-        actions={(
-          <>
-            <StudioMetricCard compact label="项目总数" value={projects.length} detail="当前所有视频制作项目" />
-            <StudioMetricCard compact label="分组总数" value={projectGroups.length} detail="按分组沉淀素材与画面" />
-          </>
-        )}
+        actions={<HomeTelemetryDashboard stats={telemetryStats} />}
       />
 
       <div className="mt-8 grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.7fr)]">

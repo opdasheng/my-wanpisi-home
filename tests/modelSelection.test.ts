@@ -42,6 +42,15 @@ test('image model selection expands Gemini image catalog models', () => {
   assert.equal(resolved?.modelName, 'gemini-3.1-flash-image-preview');
 });
 
+test('image model selection includes OpenAI gpt-image-2 source', () => {
+  const options = getRoleModelSelectionOptions(defaultApiSettings, 'image');
+  const openAIOption = options.find((option) => option.value === 'openai.imageModel::gpt-image-2');
+
+  assert.equal(openAIOption?.sourceId, 'openai.imageModel');
+  assert.equal(openAIOption?.modelName, 'gpt-image-2');
+  assert.match(openAIOption?.label || '', /OpenAI/u);
+});
+
 test('legacy Gemini pro image source resolves to catalog image option without duplicating models', () => {
   const resolved = resolveSelectionValue(defaultApiSettings, 'image', 'gemini.proImageModel');
 
