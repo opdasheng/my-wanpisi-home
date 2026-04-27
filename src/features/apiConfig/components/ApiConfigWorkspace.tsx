@@ -5,6 +5,7 @@ import { ApiConfigPage } from './ApiConfigPage.tsx';
 import { SeedanceHealthPanel } from '../../fastVideoFlow/components/SeedanceHealthPanel.tsx';
 import type { SeedanceHealth } from '../../fastVideoFlow/types/fastTypes.ts';
 import type { ModelProviderId, ModelRole } from '../../../services/apiConfig.ts';
+import { getProviderModelCatalog } from '../../../services/apiConfig.ts';
 import type { ModelInvocationLogEntry } from '../../../services/modelInvocationLog.ts';
 import type { MockApiServerStatus } from '../../../services/mockApiConfig.ts';
 
@@ -81,6 +82,10 @@ export function ApiConfigWorkspace({
       getGeminiRoleModelOptions={getGeminiRoleModelOptions}
       getVolcengineRoleModelOptions={getVolcengineRoleModelOptions}
       getOpenAIRoleModelOptions={getOpenAIRoleModelOptions}
+      getAliyunRoleModelOptions={(role) => {
+        const catalog = getProviderModelCatalog('aliyun', role, apiSettings);
+        return catalog.map((model) => ({ value: model.modelId, label: model.name }));
+      }}
       getProviderRoleCatalogOptions={getProviderRoleCatalogOptions}
       updateGeminiRoleModel={updateGeminiRoleModel}
     />

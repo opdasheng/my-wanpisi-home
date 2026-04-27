@@ -18,7 +18,7 @@ type SeedanceEstimateDimensionConfig = {
 };
 
 type SeedanceCostExecutionConfig = {
-  executor: 'ark' | 'cli';
+  executor: 'ark' | 'cli' | 'aliyun';
   apiModelKey: 'standard' | 'fast';
   cliModelVersion: SeedanceModelVersion;
 };
@@ -27,7 +27,8 @@ export type SeedanceCostEstimate = {
   modelLabel: string;
   billingLabel: string;
   unitPrice: number;
-  effectiveRatio: SeedanceDraft['options']['ratio'] | FastVideoInput['aspectRatio'];
+  pricingUnit: 'tokens' | 'second';
+  effectiveRatio: SeedanceDraft['options']['resolution'] | FastVideoInput['aspectRatio'];
   width: number;
   height: number;
   frameRate: number;
@@ -56,6 +57,11 @@ const SEEDANCE_PRICING = {
     withVideoInputUnitPrice: 22,
     withoutVideoInputUnitPrice: 37,
   },
+  aliyun: {
+    modelLabel: 'HappyHorse 1.0',
+    withVideoInputUnitPrice: 0,
+    withoutVideoInputUnitPrice: 0,
+  },
 } as const;
 
 export function resolveEstimateRatio(
@@ -72,6 +78,9 @@ export function hasSelectedReferenceVideoInput(referenceVideos: FastReferenceVid
 }
 
 export function getSeedancePricingKey(executionConfig: SeedanceCostExecutionConfig) {
+  if (executionConfig.executor === 'aliyun') {
+    return 'aliyun';
+  }
   if (executionConfig.executor === 'ark') {
     return executionConfig.apiModelKey;
   }
@@ -179,15 +188,27 @@ export function getSeedanceCostEstimate(
   const frameRate = 24;
   const tokensPerSecond = (resolvedDimensions.width * resolvedDimensions.height * frameRate) / 1024;
   const totalTokens = tokensPerSecond * billableDurationSec;
-  const estimatedCost = (totalTokens / 1_000_000) * unitPrice;
-  const billingLabel = includesVideoInput
+  
+  let estimatedCost = (totalTokens / 1_000_000) * unitPrice;
+  let billingLabel = includesVideoInput
     ? `已选中 ${selectedReferenceVideos.length} 条参考视频，输入 ${inputDurationSec.toFixed(1).replace(/\.0$/u, '')}s + 输出 ${outputDurationSec}s 计费。${missingInputDurationCount > 0 ? ` 其中 ${missingInputDurationCount} 条未解析到时长，当前按 0s 处理。` : ''}`
     : '当前未选中参考视频，按不含视频输入计费。';
+  let finalUnitPrice: number = unitPrice;
+  let pricingUnit: 'tokens' | 'second' = 'tokens';
+
+  if (pricingKey === 'aliyun') {
+    const is1080p = seedanceDraft.options.resolution === '1080p';
+    finalUnitPrice = is1080p ? 1.6 : 0.9;
+    estimatedCost = outputDurationSec * finalUnitPrice;
+    billingLabel = `按时长计费，生成 ${outputDurationSec}s 视频，单价 ${finalUnitPrice}元/秒`;
+    pricingUnit = 'second';
+  }
 
   return {
     modelLabel: pricing.modelLabel,
     billingLabel,
-    unitPrice,
+    unitPrice: finalUnitPrice,
+    pricingUnit,
     effectiveRatio,
     width: resolvedDimensions.width,
     height: resolvedDimensions.height,

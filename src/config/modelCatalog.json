@@ -159,6 +159,23 @@
         ],
         "video": []
       }
+    },
+    "aliyun": {
+      "label": "阿里云",
+      "promptLanguage": {
+        "default": "zh",
+        "supported": ["zh", "en"]
+      },
+      "models": {
+        "text": [],
+        "image": [],
+        "video": [
+          {
+            "name": "HappyHorse 1.0",
+            "modelId": "happyhorse-1.0"
+          }
+        ]
+      }
     }
   }
 }

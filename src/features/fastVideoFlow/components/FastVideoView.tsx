@@ -1060,7 +1060,7 @@ type Props = {
   draftIssues: string[];
   task: SeedanceTask;
   executionConfig: {
-    executor: 'ark' | 'cli';
+    executor: 'ark' | 'cli' | 'aliyun';
     apiModelKey: 'standard' | 'fast';
     cliModelVersion: SeedanceModelVersion;
     pollIntervalSec: number;
@@ -1925,12 +1925,12 @@ export function FastVideoView({
                 className: 'sm:col-span-6',
                 valueClassName: 'break-words leading-5',
               })}
-              {renderSummaryCard('计费单价', `${formatCny(costEstimate.unitPrice)} / 百万tokens`, {
+              {renderSummaryCard('计费单价', costEstimate.pricingUnit === 'second' ? `${formatCny(costEstimate.unitPrice)} / 秒` : `${formatCny(costEstimate.unitPrice)} / 百万tokens`, {
                 tone: 'amber',
                 infoContent: costEstimate.billingLabel,
-                className: 'sm:col-span-4',
+                className: costEstimate.pricingUnit === 'second' ? 'sm:col-span-5' : 'sm:col-span-4',
               })}
-              {renderSummaryCard('估算 tokens', formatTokenCount(costEstimate.totalTokens), {
+              {costEstimate.pricingUnit === 'tokens' ? renderSummaryCard('估算 tokens', formatTokenCount(costEstimate.totalTokens), {
                 tone: 'amber',
                 className: 'sm:col-span-5',
                 infoContent: (
@@ -1941,10 +1941,10 @@ export function FastVideoView({
                     {seedanceDraft.options.ratio === 'adaptive' ? ` 当前 adaptive 按输入画幅 ${costEstimate.effectiveRatio} 折算。` : ''}
                   </>
                 ),
-              })}
+              }) : null}
               {renderSummaryCard('预估费用', formatCny(costEstimate.estimatedCost), {
                 tone: 'amber',
-                className: 'sm:col-span-5',
+                className: costEstimate.pricingUnit === 'second' ? 'sm:col-span-5' : 'sm:col-span-5',
               })}
             </div>
           </section>
@@ -1953,7 +1953,7 @@ export function FastVideoView({
             <div className="flex items-center justify-between gap-3">
               <div className="text-white font-semibold">执行参数</div>
               <div className="text-right text-xs text-zinc-500">
-                {(executionConfig.executor === 'ark' ? 'Ark API' : '本地 CLI')}
+                {(executionConfig.executor === 'ark' ? 'Ark API' : executionConfig.executor === 'aliyun' ? '阿里云' : '本地 CLI')}
                 {' · '}
                 {`画幅：${seedanceDraft.options.ratio} · 时长：${seedanceDraft.options.duration || 10}s · ${seedanceDraft.options.resolution}`}
               </div>
@@ -1968,6 +1968,7 @@ export function FastVideoView({
                 >
                   <option value="ark">Ark API</option>
                   <option value="cli">本地 CLI</option>
+                  <option value="aliyun">HappyHorse API</option>
                 </StudioSelect>
               </label>
               {executionConfig.executor === 'ark' ? (
@@ -1981,6 +1982,17 @@ export function FastVideoView({
                     <option value="standard">Seedance 2.0</option>
                     <option value="fast">Seedance 2.0 Fast</option>
                   </StudioSelect>
+                </label>
+              ) : executionConfig.executor === 'aliyun' ? (
+                <label className="block">
+                  <span className={fieldLabelClassName}>模型</span>
+                  <div className="h-10 px-3 flex items-center bg-zinc-800 border border-zinc-700/50 rounded-xl text-zinc-300">
+                    {seedanceDraft.baseTemplateId === 'multi_image_reference'
+                      ? '1.0-r2v'
+                      : seedanceDraft.baseTemplateId === 'first_frame' || seedanceDraft.baseTemplateId === 'first_last_frame'
+                        ? '1.0-i2v'
+                        : '1.0-t2v'}
+                  </div>
                 </label>
               ) : (
                 <label className="block">
@@ -2183,8 +2195,13 @@ export function FastVideoView({
               </div>
             </div>
             {task.error ? (
-              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                {task.error}
+              <div 
+                className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200 cursor-help"
+                title={task.error}
+              >
+                <div className="line-clamp-4 break-all">
+                  {task.error}
+                </div>
               </div>
             ) : null}
           </section>

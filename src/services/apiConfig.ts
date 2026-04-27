@@ -7,7 +7,7 @@ export const API_SETTINGS_STATE_KEY = 'api_settings';
 
 export type ModelRole = 'text' | 'image' | 'video';
 export type FlowModelCategory = 'text' | 'image' | 'video';
-export type ModelProviderId = 'gemini' | 'volcengine' | 'openai';
+export type ModelProviderId = 'gemini' | 'volcengine' | 'openai' | 'aliyun';
 export type BillingType = 'per_image' | 'per_million_tokens';
 export type BillingCurrency = 'CNY' | 'USD';
 export interface ModelPricingConfig {
@@ -61,6 +61,7 @@ export interface VolcengineModelCatalogItem {
 export const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
 export const DEFAULT_VOLCENGINE_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+export const DEFAULT_ALIYUN_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
 
 const MODEL_PROVIDER_CATALOG = modelCatalogConfig.providers as Record<ModelProviderId, ProviderCatalog>;
 const PRICING_CATALOG_CONFIG = (modelCatalogConfig.pricingConfig || {}) as PricingCatalogConfig;
@@ -68,6 +69,7 @@ const FALLBACK_PROVIDER_PROMPT_LANGUAGE: Record<ModelProviderId, PromptLanguage>
   gemini: 'en',
   volcengine: 'zh',
   openai: 'en',
+  aliyun: 'zh',
 };
 const FALLBACK_USD_TO_CNY_RATE = 7.2;
 const LEGACY_VOLCENGINE_MODEL_ID_MAP: Record<string, string> = {
@@ -141,6 +143,7 @@ const ROLE_BY_SOURCE_ID: Record<Exclude<ModelSourceId, ''>, ModelRole> = {
   'volcengine.imageModel': 'image',
   'volcengine.videoModel': 'video',
   'openai.imageModel': 'image',
+  'aliyun.fastVideoModel': 'video',
   'seedance.apiModel': 'video',
   'seedance.fastApiModel': 'video',
 };
@@ -173,6 +176,14 @@ export const defaultApiSettings: ApiSettings = {
     baseUrl: DEFAULT_OPENAI_BASE_URL,
     promptLanguage: getProviderPromptLanguageCatalog('openai').default,
     imageModel: 'gpt-image-2',
+    customModels: [],
+  },
+  aliyun: {
+    enabled: true,
+    apiKey: '',
+    baseUrl: DEFAULT_ALIYUN_BASE_URL,
+    promptLanguage: getProviderPromptLanguageCatalog('aliyun').default,
+    fastVideoModel: 'happyhorse-1.0',
     customModels: [],
   },
   seedance: {
@@ -216,6 +227,7 @@ const MODEL_SOURCE_META: Record<Exclude<ModelSourceId, ''>, { label: string; pro
   'volcengine.imageModel': { label: '图像模型', providerLabel: MODEL_PROVIDER_CATALOG.volcengine.label },
   'volcengine.videoModel': { label: '视频模型', providerLabel: MODEL_PROVIDER_CATALOG.volcengine.label },
   'openai.imageModel': { label: '图像模型', providerLabel: MODEL_PROVIDER_CATALOG.openai.label },
+  'aliyun.fastVideoModel': { label: '快速视频模型', providerLabel: MODEL_PROVIDER_CATALOG.aliyun?.label || '阿里云' },
   'seedance.apiModel': { label: 'Seedance 2.0', providerLabel: '火山引擎 Ark' },
   'seedance.fastApiModel': { label: 'Seedance 2.0 Fast', providerLabel: '火山引擎 Ark' },
 };
@@ -223,7 +235,7 @@ const MODEL_SOURCE_META: Record<Exclude<ModelSourceId, ''>, { label: string; pro
 const ROLE_SOURCE_IDS: Record<ModelRole, ModelSourceId[]> = {
   text: ['gemini.textModel', 'volcengine.textModel'],
   image: ['gemini.imageModel', 'gemini.proImageModel', 'volcengine.imageModel', 'openai.imageModel'],
-  video: ['gemini.fastVideoModel', 'gemini.proVideoModel', 'volcengine.videoModel'],
+  video: ['gemini.fastVideoModel', 'gemini.proVideoModel', 'volcengine.videoModel', 'aliyun.fastVideoModel'],
 };
 
 export const DEFAULT_MODEL_ROLE_META: Record<ModelRole, { title: string; description: string }> = {
@@ -355,7 +367,7 @@ function readModelSource(settings: ApiSettings, sourceId: ModelSourceId): string
     return settings.seedance.fastApiModel.trim();
   }
 
-  const [provider, field] = sourceId.split('.') as ['gemini' | 'volcengine' | 'openai', string];
+  const [provider, field] = sourceId.split('.') as ['gemini' | 'volcengine' | 'openai' | 'aliyun', string];
   const config = settings[provider] as unknown as Record<string, string>;
   return (config[field] || '').trim();
 }
@@ -512,6 +524,11 @@ export function resolveOpenAIBaseUrl(baseUrl?: string): string {
   return normalized || DEFAULT_OPENAI_BASE_URL;
 }
 
+export function resolveAliyunBaseUrl(baseUrl?: string): string {
+  const normalized = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/u, '') : '';
+  return normalized || DEFAULT_ALIYUN_BASE_URL;
+}
+
 export function resolveGeminiBaseUrl(baseUrl?: string): string {
   const normalized = typeof baseUrl === 'string' ? baseUrl.trim().replace(/\/+$/u, '') : '';
   const withoutApiVersion = normalized.replace(/\/v1(?:alpha|beta)?$/iu, '');
@@ -522,6 +539,7 @@ function normalizeApiSettings(settings: ApiSettings): ApiSettings {
   const geminiLanguageCatalog = getProviderPromptLanguageCatalog('gemini');
   const volcengineLanguageCatalog = getProviderPromptLanguageCatalog('volcengine');
   const openaiLanguageCatalog = getProviderPromptLanguageCatalog('openai');
+  const aliyunLanguageCatalog = getProviderPromptLanguageCatalog('aliyun');
   const normalizedGeminiPromptLanguage = geminiLanguageCatalog.supported.includes(settings.gemini.promptLanguage)
     ? settings.gemini.promptLanguage
     : geminiLanguageCatalog.default;
@@ -531,6 +549,9 @@ function normalizeApiSettings(settings: ApiSettings): ApiSettings {
   const normalizedOpenAIPromptLanguage = openaiLanguageCatalog.supported.includes(settings.openai?.promptLanguage)
     ? settings.openai.promptLanguage
     : openaiLanguageCatalog.default;
+  const normalizedAliyunPromptLanguage = aliyunLanguageCatalog.supported.includes(settings.aliyun?.promptLanguage)
+    ? settings.aliyun.promptLanguage
+    : aliyunLanguageCatalog.default;
 
   return {
     ...settings,
@@ -559,6 +580,16 @@ function normalizeApiSettings(settings: ApiSettings): ApiSettings {
       imageModel: typeof settings.openai?.imageModel === 'string' && settings.openai.imageModel.trim()
         ? settings.openai.imageModel.trim()
         : defaultApiSettings.openai.imageModel,
+    },
+    aliyun: {
+      enabled: settings.aliyun?.enabled !== false,
+      apiKey: typeof settings.aliyun?.apiKey === 'string' ? settings.aliyun.apiKey : '',
+      baseUrl: resolveAliyunBaseUrl(settings.aliyun?.baseUrl),
+      customModels: normalizeCustomModels(settings.aliyun?.customModels, 'aliyun'),
+      promptLanguage: normalizedAliyunPromptLanguage,
+      fastVideoModel: typeof settings.aliyun?.fastVideoModel === 'string' && settings.aliyun.fastVideoModel.trim()
+        ? settings.aliyun.fastVideoModel.trim()
+        : defaultApiSettings.aliyun.fastVideoModel,
     },
     seedance: {
       enabled: settings.seedance?.enabled !== false,
@@ -622,6 +653,10 @@ function mergeApiSettings(parsed?: Partial<ApiSettings>): ApiSettings {
       ...defaultApiSettings.openai,
       ...(parsed?.openai || {}),
     },
+    aliyun: {
+      ...defaultApiSettings.aliyun,
+      ...(parsed?.aliyun || {}),
+    },
     seedance: {
       ...defaultApiSettings.seedance,
       ...(parsed?.seedance || {}),
@@ -672,7 +707,7 @@ export function getModelSourceDisplayValue(settings: ApiSettings, sourceId: Mode
     return `${getSeedanceApiModelLabelForSourceId(sourceId)} (${value})`;
   }
 
-  const providerId = sourceId.startsWith('volcengine.') ? 'volcengine' : 'gemini';
+  const providerId = sourceId.startsWith('volcengine.') ? 'volcengine' : (sourceId.startsWith('aliyun.') ? 'aliyun' : 'gemini');
   return formatConfiguredModelDisplay(providerId, ROLE_BY_SOURCE_ID[sourceId], value);
 }
 
@@ -687,6 +722,9 @@ export function getModelSourceOptionsForSelection(settings: ApiSettings, role: M
         return null;
       }
       if (sourceId.startsWith('openai.') && !includeDisabledProviders && !settings.openai.enabled) {
+        return null;
+      }
+      if (sourceId.startsWith('aliyun.') && !includeDisabledProviders && !settings.aliyun.enabled) {
         return null;
       }
 

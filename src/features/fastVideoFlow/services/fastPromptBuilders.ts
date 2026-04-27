@@ -75,6 +75,7 @@ function buildFastReferenceAudioDetails(input: FastVideoInput) {
 }
 
 function buildFastReferenceImagePromptPrefix(input: FastVideoInput) {
+  return ''; // 不做处理
   const readyReferences = input.referenceImages.filter((item) => item.imageUrl.trim());
 
   if (readyReferences.length === 0) {

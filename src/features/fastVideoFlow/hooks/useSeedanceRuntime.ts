@@ -14,7 +14,7 @@ type SeedanceLogEntry = {
   request: unknown;
   response?: unknown;
   error?: string;
-  executor?: 'ark' | 'cli';
+  executor?: 'ark' | 'cli' | 'aliyun';
   sourceId?: ModelInvocationLogEntry['sourceId'];
   modelName?: string;
 };
@@ -111,11 +111,17 @@ export function useSeedanceRuntime({
         provider: 'seedance-ark' as const,
         ...getSeedanceArkModelMeta(project.fastFlow.executionConfig.apiModelKey),
       }
-      : {
-        provider: 'seedance-cli' as const,
-        sourceId: 'seedance.cliModelVersion' as const,
-        modelName: apiSettings.seedance.cliModelVersion,
-      };
+      : executor === 'aliyun'
+        ? {
+          provider: 'aliyun' as const,
+          sourceId: 'aliyun.fastVideoModel' as const,
+          modelName: apiSettings.aliyun.fastVideoModel,
+        }
+        : {
+          provider: 'seedance-cli' as const,
+          sourceId: 'seedance.cliModelVersion' as const,
+          modelName: apiSettings.seedance.cliModelVersion,
+        };
     appendModelInvocationLog({
       provider: defaultMeta.provider,
       operation: entry.operation,

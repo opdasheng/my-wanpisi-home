@@ -8,6 +8,7 @@ import type { ApiSettings, ModelSourceId } from '../../../types.ts';
 import {
   DEFAULT_GEMINI_BASE_URL,
   DEFAULT_OPENAI_BASE_URL,
+  DEFAULT_ALIYUN_BASE_URL,
   DEFAULT_VOLCENGINE_BASE_URL,
   DEFAULT_MODEL_ROLE_META,
   getDefaultModelSource,
@@ -38,9 +39,13 @@ import {
   VOLCENGINE_PROVIDER_MODEL_FIELDS,
   VOLCENGINE_ROLE_FIELDS,
   VOLCENGINE_ROLE_SOURCE_IDS,
+  ALIYUN_PROVIDER_MODEL_FIELDS,
+  ALIYUN_ROLE_FIELDS,
+  ALIYUN_ROLE_SOURCE_IDS,
   type GeminiModelField,
   type OpenAIModelField,
   type VolcengineModelField,
+  type AliyunModelField,
 } from '../utils/apiConfigUi.ts';
 
 type ApiConfigPageProps = {
@@ -62,6 +67,7 @@ type ApiConfigPageProps = {
   getGeminiRoleModelOptions: (role: ModelRole) => Array<{ value: string; sourceId: ModelSourceId; modelName: string; label: string }>;
   getVolcengineRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
   getOpenAIRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
+  getAliyunRoleModelOptions: (role: ModelRole) => Array<{ value: string; label: string }>;
   getProviderRoleCatalogOptions: (apiSettings: ApiSettings, providerId: ModelProviderId, role: ModelRole, configuredValue: string) => Array<{ value: string; label: string }>;
   updateGeminiRoleModel: (role: ModelRole, modelId: string) => void;
 };
@@ -89,6 +95,9 @@ function getProviderCustomModels(settings: ApiSettings, providerId: ModelProvide
   if (providerId === 'openai') {
     return settings.openai.customModels;
   }
+  if (providerId === 'aliyun') {
+    return settings.aliyun.customModels;
+  }
   return settings.gemini.customModels;
 }
 
@@ -105,6 +114,10 @@ function getProviderRoleConfiguredModel(settings: ApiSettings, providerId: Model
 
   if (providerId === 'openai') {
     return role === 'image' ? settings.openai.imageModel : '';
+  }
+
+  if (providerId === 'aliyun') {
+    return role === 'video' ? settings.aliyun.fastVideoModel : '';
   }
 
   if (role === 'image') {
@@ -142,6 +155,20 @@ function applyProviderRoleModelToSettings(settings: ApiSettings, providerId: Mod
     };
   }
 
+  if (providerId === 'aliyun') {
+    if (role !== 'video') {
+      return settings;
+    }
+
+    return {
+      ...settings,
+      aliyun: {
+        ...settings.aliyun,
+        fastVideoModel: modelId,
+      },
+    };
+  }
+
   const field = VOLCENGINE_ROLE_FIELDS[role];
   return {
     ...settings,
@@ -171,6 +198,7 @@ export function ApiConfigPage({
   getGeminiRoleModelOptions,
   getVolcengineRoleModelOptions,
   getOpenAIRoleModelOptions,
+  getAliyunRoleModelOptions,
   getProviderRoleCatalogOptions,
   updateGeminiRoleModel,
 }: ApiConfigPageProps) {
@@ -238,9 +266,17 @@ export function ApiConfigPage({
               customModels: nextCustomModels,
             },
           }
-          : {
-            ...prev,
-            gemini: {
+          : providerId === 'aliyun'
+            ? {
+              ...prev,
+              aliyun: {
+                ...prev.aliyun,
+                customModels: nextCustomModels,
+              },
+            }
+            : {
+              ...prev,
+              gemini: {
               ...prev.gemini,
               customModels: nextCustomModels,
             },
@@ -272,9 +308,17 @@ export function ApiConfigPage({
               customModels: nextCustomModels,
             },
           }
-          : {
-            ...prev,
-            gemini: {
+          : providerId === 'aliyun'
+            ? {
+              ...prev,
+              aliyun: {
+                ...prev.aliyun,
+                customModels: nextCustomModels,
+              },
+            }
+            : {
+              ...prev,
+              gemini: {
               ...prev.gemini,
               customModels: nextCustomModels,
             },
@@ -314,10 +358,13 @@ export function ApiConfigPage({
             const volcengineOptions = getVolcengineRoleModelOptions(role);
             const openaiSourceId = OPENAI_ROLE_SOURCE_IDS[role];
             const openaiOptions = getOpenAIRoleModelOptions(role);
+            const aliyunSourceId = ALIYUN_ROLE_SOURCE_IDS[role];
+            const aliyunOptions = getAliyunRoleModelOptions(role);
             const providerOptions = [
               ...(geminiOptions.length > 0 ? [{ value: 'gemini' as ModelProviderId, label: 'Google AI Studio' }] : []),
               ...(volcengineOptions.length > 0 ? [{ value: 'volcengine' as ModelProviderId, label: '火山引擎 Ark' }] : []),
               ...(openaiSourceId && openaiOptions.length > 0 ? [{ value: 'openai' as ModelProviderId, label: 'OpenAI' }] : []),
+              ...(aliyunSourceId && aliyunOptions.length > 0 ? [{ value: 'aliyun' as ModelProviderId, label: '阿里云' }] : []),
             ];
             const geminiSourceId = value.startsWith('gemini.')
               ? value
@@ -326,7 +373,9 @@ export function ApiConfigPage({
               ? (resolveModelSource(apiSettings, volcengineSourceId) || volcengineOptions[0]?.value || '')
               : selectedProvider === 'openai' && openaiSourceId
                 ? (resolveModelSource(apiSettings, openaiSourceId) || openaiOptions[0]?.value || '')
-                : (resolveModelSource(apiSettings, geminiSourceId) || geminiOptions[0]?.modelName || '');
+                : selectedProvider === 'aliyun' && aliyunSourceId
+                  ? (resolveModelSource(apiSettings, aliyunSourceId) || aliyunOptions[0]?.value || '')
+                  : (resolveModelSource(apiSettings, geminiSourceId) || geminiOptions[0]?.modelName || '');
 
             return (
               <div key={role} className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4">
@@ -371,6 +420,27 @@ export function ApiConfigPage({
                           defaultModels: {
                             ...prev.defaultModels,
                             [role]: nextOpenAISourceId,
+                          },
+                        }));
+                        return;
+                      }
+
+                      if (provider === 'aliyun') {
+                        const nextAliyunOption = getAliyunRoleModelOptions(role)[0];
+                        const nextAliyunSourceId = ALIYUN_ROLE_SOURCE_IDS[role];
+                        if (!nextAliyunOption || !nextAliyunSourceId) {
+                          return;
+                        }
+
+                        setApiSettings((prev) => ({
+                          ...prev,
+                          aliyun: {
+                            ...prev.aliyun,
+                            fastVideoModel: nextAliyunOption.value,
+                          },
+                          defaultModels: {
+                            ...prev.defaultModels,
+                            [role]: nextAliyunSourceId,
                           },
                         }));
                         return;
@@ -437,6 +507,21 @@ export function ApiConfigPage({
                       return;
                     }
 
+                    if (selectedProvider === 'aliyun' && aliyunSourceId) {
+                      setApiSettings((prev) => ({
+                        ...prev,
+                        aliyun: {
+                          ...prev.aliyun,
+                          fastVideoModel: nextValue,
+                        },
+                        defaultModels: {
+                          ...prev.defaultModels,
+                          [role]: aliyunSourceId,
+                        },
+                      }));
+                      return;
+                    }
+
                     const nextGeminiOption = geminiOptions.find((option) => option.modelName === nextValue);
                     setApiSettings((prev) => ({
                       ...prev,
@@ -467,6 +552,16 @@ export function ApiConfigPage({
                       <option value="">请先填写可用模型</option>
                     ) : (
                       openaiOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))
+                    )
+                  ) : selectedProvider === 'aliyun' ? (
+                    aliyunOptions.length === 0 ? (
+                      <option value="">请先填写可用模型</option>
+                    ) : (
+                      aliyunOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
@@ -619,21 +714,26 @@ export function ApiConfigPage({
       ) : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-            {(['gemini', 'volcengine', 'openai'] as ModelProviderId[]).map((providerId) => {
+            {(['gemini', 'volcengine', 'openai', 'aliyun'] as ModelProviderId[]).map((providerId) => {
           const isVolcengine = providerId === 'volcengine';
           const isOpenAI = providerId === 'openai';
+          const isAliyun = providerId === 'aliyun';
           const meta = PROVIDER_CARD_META[providerId];
           const modelFieldGroups = providerId === 'gemini'
             ? GEMINI_PROVIDER_MODEL_FIELDS
             : providerId === 'openai'
               ? OPENAI_PROVIDER_MODEL_FIELDS
-              : VOLCENGINE_PROVIDER_MODEL_FIELDS;
+              : providerId === 'aliyun'
+                ? ALIYUN_PROVIDER_MODEL_FIELDS
+                : VOLCENGINE_PROVIDER_MODEL_FIELDS;
           const promptLanguageCatalog = getProviderPromptLanguageCatalog(providerId);
           const currentPromptLanguage = isVolcengine
             ? apiSettings.volcengine.promptLanguage
             : isOpenAI
               ? apiSettings.openai.promptLanguage
-              : apiSettings.gemini.promptLanguage;
+              : isAliyun
+                ? apiSettings.aliyun.promptLanguage
+                : apiSettings.gemini.promptLanguage;
           const customModels = getProviderCustomModels(apiSettings, providerId);
           const visibleRoles = MODEL_ROLE_ORDER.filter((role) => modelFieldGroups[role].length > 0);
 
@@ -666,6 +766,10 @@ export function ApiConfigPage({
                             setApiSettings((prev) => ({ ...prev, openai: { ...prev.openai, promptLanguage: language } }));
                             return;
                           }
+                          if (isAliyun) {
+                            setApiSettings((prev) => ({ ...prev, aliyun: { ...prev.aliyun, promptLanguage: language } }));
+                            return;
+                          }
                           setApiSettings((prev) => ({ ...prev, gemini: { ...prev.gemini, promptLanguage: language } }));
                         }}
                         className={`h-8 w-10 rounded-md text-base leading-none transition-colors ${currentPromptLanguage === language
@@ -685,7 +789,7 @@ export function ApiConfigPage({
                   <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Key</span>
                   <input
                     type="password"
-                    value={isVolcengine ? apiSettings.volcengine.apiKey : isOpenAI ? apiSettings.openai.apiKey : apiSettings.gemini.apiKey}
+                    value={isVolcengine ? apiSettings.volcengine.apiKey : isOpenAI ? apiSettings.openai.apiKey : isAliyun ? apiSettings.aliyun.apiKey : apiSettings.gemini.apiKey}
                     onChange={(event) => {
                       const value = event.target.value;
                       if (isVolcengine) {
@@ -696,14 +800,18 @@ export function ApiConfigPage({
                         setApiSettings((prev) => ({ ...prev, openai: { ...prev.openai, apiKey: value } }));
                         return;
                       }
+                      if (isAliyun) {
+                        setApiSettings((prev) => ({ ...prev, aliyun: { ...prev.aliyun, apiKey: value } }));
+                        return;
+                      }
                       setApiSettings((prev) => ({ ...prev, gemini: { ...prev.gemini, apiKey: value } }));
                     }}
-                    placeholder={isVolcengine ? '按方舟 API Key 填写' : isOpenAI ? '填写 OpenAI API Key' : '留空则继续使用 AI Studio Key 或 GEMINI_API_KEY'}
+                    placeholder={isVolcengine ? '按方舟 API Key 填写' : isOpenAI ? '填写 OpenAI API Key' : isAliyun ? '填写阿里云百炼 API Key' : '留空则继续使用 AI Studio Key 或 GEMINI_API_KEY'}
                     className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
                   />
                 </label>
 
-                {!isVolcengine && !isOpenAI && (
+                {!isVolcengine && !isOpenAI && !isAliyun && (
                   <label className="block">
                     <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Base URL / 第三方 Endpoint</span>
                     <input
@@ -745,6 +853,27 @@ export function ApiConfigPage({
                   </label>
                 )}
 
+                {isAliyun && (
+                  <label className="block">
+                    <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Base URL / 第三方 Endpoint</span>
+                    <input
+                      value={apiSettings.aliyun.baseUrl}
+                      onChange={(event) => setApiSettings((prev) => ({
+                        ...prev,
+                        aliyun: {
+                          ...prev.aliyun,
+                          baseUrl: event.target.value,
+                        },
+                      }))}
+                      placeholder={DEFAULT_ALIYUN_BASE_URL}
+                      className="mt-2 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-indigo-500"
+                    />
+                    <p className="mt-2 text-xs leading-5 text-zinc-500">
+                      默认走官方地址 {DEFAULT_ALIYUN_BASE_URL}。
+                    </p>
+                  </label>
+                )}
+
                 {isVolcengine && (
                   <label className="block">
                     <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">API Base URL / 第三方 Endpoint</span>
@@ -778,7 +907,9 @@ export function ApiConfigPage({
                             ? apiSettings.gemini[fieldConfig.field as GeminiModelField]
                             : providerId === 'openai'
                               ? apiSettings.openai[fieldConfig.field as OpenAIModelField]
-                              : apiSettings.volcengine[fieldConfig.field as VolcengineModelField];
+                              : providerId === 'aliyun'
+                                ? apiSettings.aliyun[fieldConfig.field as AliyunModelField]
+                                : apiSettings.volcengine[fieldConfig.field as VolcengineModelField];
                           const options = getProviderRoleCatalogOptions(apiSettings, providerId, role, configuredValue);
                           const selectedValue = configuredValue || options[0]?.value || '';
 
@@ -800,6 +931,18 @@ export function ApiConfigPage({
                                       ...prev,
                                       openai: {
                                         ...prev.openai,
+                                        [field]: nextValue,
+                                      },
+                                    }));
+                                    return;
+                                  }
+
+                                  if (providerId === 'aliyun') {
+                                    const field = fieldConfig.field as AliyunModelField;
+                                    setApiSettings((prev) => ({
+                                      ...prev,
+                                      aliyun: {
+                                        ...prev.aliyun,
                                         [field]: nextValue,
                                       },
                                     }));
@@ -1223,7 +1366,9 @@ export function ApiConfigPage({
                           ? 'Ark API'
                           : log.provider === 'seedance-cli'
                             ? 'Seedance CLI'
-                            : 'Gemini'}
+                            : log.provider === 'aliyun'
+                              ? '阿里云百炼'
+                              : 'Gemini'}
                     </span>
                   </div>
                 </div>

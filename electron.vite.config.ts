@@ -29,6 +29,15 @@ export default defineConfig({
   renderer: {
     root: '.',
     plugins: [react(), tailwindcss()],
+    server: {
+      proxy: {
+        '/api/aliyun': {
+          target: 'https://dashscope.aliyuncs.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/aliyun/, '')
+        }
+      }
+    },
     build: {
       outDir: 'out/renderer',
       rollupOptions: {

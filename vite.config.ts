@@ -24,6 +24,11 @@ export default defineConfig(({mode}) => {
           target: env.VITE_SEEDANCE_BRIDGE_TARGET || 'http://127.0.0.1:3210',
           changeOrigin: true,
         },
+        '/api/aliyun': {
+          target: 'https://dashscope.aliyuncs.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/aliyun/, ''),
+        },
       },
     },
   };

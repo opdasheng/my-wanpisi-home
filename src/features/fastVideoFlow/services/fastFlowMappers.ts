@@ -14,7 +14,7 @@ import type {
 import { FAST_VIDEO_PROMPT_CONFIG } from '../../../config/fastVideoPrompts.ts';
 import { normalizeFastVideoExecutionPrompt } from './fastPromptBuilders.ts';
 import { hasHumanFaceMosaicSuffix, syncHumanFaceMosaicPrompt } from './fastScenePrompt.ts';
-import type { SeedanceDraft, SeedanceOverlayTemplateId } from '../../seedance/types.ts';
+import type { SeedanceDraft, SeedanceExecutorId, SeedanceOverlayTemplateId } from '../../seedance/types.ts';
 import { normalizeSeedanceModelVersion } from '../../seedance/modelVersions.ts';
 
 type NormalizableFastVideoProject = Partial<Omit<FastVideoProject, 'scenes'>> & {
@@ -431,9 +431,9 @@ export function syncFastFlowSeedanceDraft(fastFlow: FastVideoProject): SeedanceD
 
 export function resolveFastVideoTaskProvider(
   task?: Partial<SeedanceTask> | null,
-  fallback: 'ark' | 'cli' = 'cli',
-): 'ark' | 'cli' {
-  if (task?.provider === 'ark' || task?.provider === 'cli') {
+  fallback: SeedanceExecutorId = 'cli',
+): SeedanceExecutorId {
+  if (task?.provider === 'ark' || task?.provider === 'cli' || task?.provider === 'aliyun') {
     return task.provider;
   }
 
@@ -477,7 +477,7 @@ export function normalizeFastVideoProject(value?: NormalizableFastVideoProject |
   const input = (value?.input || {}) as Partial<FastVideoInput>;
   const task = (value?.task || {}) as Partial<SeedanceTask>;
   const legacyInput = (value?.input || {}) as Record<string, unknown>;
-  const executionExecutor = value?.executionConfig?.executor === 'cli' || value?.executionConfig?.executor === 'ark'
+  const executionExecutor = value?.executionConfig?.executor === 'cli' || value?.executionConfig?.executor === 'ark' || value?.executionConfig?.executor === 'aliyun'
     ? value.executionConfig.executor
     : base.executionConfig.executor;
   const normalizedReferenceImages = normalizeReferenceImages(input.referenceImages, typeof legacyInput.referenceImageUrl === 'string' ? legacyInput.referenceImageUrl : '');

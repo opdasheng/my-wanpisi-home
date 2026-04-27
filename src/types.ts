@@ -120,6 +120,15 @@ export interface OpenAIApiConfig {
   customModels: CustomProviderModelConfig[];
 }
 
+export interface AliyunApiConfig {
+  enabled: boolean;
+  apiKey: string;
+  baseUrl: string;
+  promptLanguage: PromptLanguage;
+  fastVideoModel: string;
+  customModels: CustomProviderModelConfig[];
+}
+
 export interface SeedanceApiConfig {
   enabled: boolean;
   apiModel: string;
@@ -157,6 +166,7 @@ export type ModelSourceId =
   | 'volcengine.imageModel'
   | 'volcengine.videoModel'
   | 'openai.imageModel'
+  | 'aliyun.fastVideoModel'
   | 'seedance.apiModel'
   | 'seedance.fastApiModel';
 
@@ -180,6 +190,7 @@ export interface ApiSettings {
   gemini: GeminiApiConfig;
   volcengine: VolcengineApiConfig;
   openai: OpenAIApiConfig;
+  aliyun: AliyunApiConfig;
   seedance: SeedanceApiConfig;
   mockApi: MockApiConfig;
   tos?: TosConfig;

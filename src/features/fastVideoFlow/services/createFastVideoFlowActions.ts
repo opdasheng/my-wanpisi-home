@@ -26,9 +26,10 @@ import {
 } from './fastFlowMappers.ts';
 import { syncHumanFaceMosaicPrompt } from './fastScenePrompt.ts';
 import { fetchSeedanceTask, submitSeedanceTask } from './seedanceBridgeClient.ts';
+import { fetchHappyHorseTask, submitHappyHorseTask } from './aliyunHappyHorseService.ts';
 import { createSeedanceTask, deleteSeedanceTask, getSeedanceTask } from '../../seedance/services/seedanceApiService.ts';
 import { validateSeedanceDraft } from '../../seedance/services/seedanceDraft.ts';
-import type { SeedanceBaseTemplateId, SeedanceDraft } from '../../seedance/types.ts';
+import type { SeedanceBaseTemplateId, SeedanceDraft, SeedanceExecutorId } from '../../seedance/types.ts';
 import { SEEDANCE_TEMPLATE_REGISTRY } from '../../seedance/config/seedanceTemplateRegistry.ts';
 import { FAST_VIDEO_PROMPT_CONFIG } from '../../../config/fastVideoPrompts.ts';
 import {
@@ -65,7 +66,7 @@ type SeedanceLogEntry = {
   request: unknown;
   response?: unknown;
   error?: string;
-  executor?: 'ark' | 'cli';
+  executor?: 'ark' | 'cli' | 'aliyun';
   sourceId?: ModelInvocationLogEntry['sourceId'];
   modelName?: string;
 };
@@ -108,7 +109,7 @@ type FastVideoFlowActionDeps = {
     sourceId: ModelInvocationLogEntry['sourceId'];
     modelName: string;
   };
-  buildSeedanceSubmitLogRequest: (draft: SeedanceDraft, executor: 'ark' | 'cli', apiModelKey?: 'standard' | 'fast') => Record<string, unknown>;
+  buildSeedanceSubmitLogRequest: (draft: SeedanceDraft, executor: SeedanceExecutorId, apiModelKey?: 'standard' | 'fast') => Record<string, unknown>;
   appendSeedanceLog: (entry: SeedanceLogEntry) => void;
   onCliConcurrencyLimit?: (input: SeedanceCliQueueEnqueueInput) => void;
 };
@@ -1176,7 +1177,7 @@ export function createFastVideoFlowActions({
     });
   };
 
-  const handleRefreshFastVideoTask = async (taskIdOverride?: string, executorOverride?: 'ark' | 'cli') => {
+  const handleRefreshFastVideoTask = async (taskIdOverride?: string, executorOverride?: SeedanceExecutorId) => {
     const targetProjectId = project.id;
     const taskId = (taskIdOverride || project.fastFlow.task.taskId || project.fastFlow.task.submitId || '').trim();
     const taskExecutor = executorOverride || resolveFastVideoTaskProvider(
@@ -1212,6 +1213,46 @@ export function createFastVideoFlowActions({
             error: '',
             startedAt: current.task.startedAt || nowIso,
             finishedAt: current.task.finishedAt || nowIso,
+          },
+        }));
+        return;
+      }
+
+      if (taskExecutor === 'aliyun') {
+        const result = await fetchHappyHorseTask(taskId, apiSettings.aliyun.apiKey, apiSettings.aliyun.baseUrl);
+        appendSeedanceLog({
+          operation: 'happyhorseQueryResult',
+          status: 'success',
+          executor: 'aliyun' as any,
+          request: { taskId, executor: 'aliyun' },
+          response: result,
+        });
+
+        const latestVideoUrl = result.downloadedFiles?.[0]?.url || '';
+        const persistedVideo = result.genStatus === 'completed' && latestVideoUrl
+          ? await persistGeneratedMediaUrl(latestVideoUrl, {
+            kind: 'video',
+            assetId: `${targetProjectId}:fast-task:video`,
+            title: '极速视频成片',
+          })
+          : undefined;
+        const nowIso = new Date().toISOString();
+
+        updateFastFlowByProjectId(targetProjectId, (current) => ({
+          ...current,
+          task: {
+            ...current.task,
+            provider: 'aliyun',
+            taskId,
+            submitId: taskId,
+            status: result.genStatus as any,
+            remoteStatus: result.raw?.output?.task_status || current.task.remoteStatus,
+            queueStatus: result.raw?.output?.task_status || current.task.queueStatus,
+            raw: result.raw,
+            error: result.genStatus === 'failed' ? (result.error?.message || '生成失败') : '',
+            videoUrl: persistedVideo?.url || current.task.videoUrl,
+            lastCheckedAt: nowIso,
+            finishedAt: resolveSeedanceFinishedAt(result.genStatus as any, current.task.finishedAt, nowIso),
           },
         }));
         return;
@@ -1476,7 +1517,63 @@ export function createFastVideoFlowActions({
         return;
       }
 
-      if (submitExecutor === 'ark') {
+      if (submitExecutor === 'aliyun') {
+        const imageSources = draft.assets
+          .filter((asset) => asset.kind === 'image')
+          .map((asset) => asset.urlOrData)
+          .filter(Boolean);
+        const happyHorseModel = draft.baseTemplateId === 'multi_image_reference'
+          ? 'happyhorse-1.0-r2v'
+          : draft.baseTemplateId === 'first_frame' || draft.baseTemplateId === 'first_last_frame'
+            ? 'happyhorse-1.0-i2v'
+            : 'happyhorse-1.0-t2v';
+        const result = await submitHappyHorseTask({
+          prompt: draft.prompt.rawPrompt,
+          imageSources,
+          model: happyHorseModel,
+          options: {
+            ratio: project.fastFlow.input.aspectRatio,
+            duration: project.fastFlow.input.durationSec,
+            videoResolution: draft.options.resolution,
+          },
+          apiKey: apiSettings.aliyun.apiKey,
+          baseUrl: apiSettings.aliyun.baseUrl,
+        });
+
+        appendSeedanceLog({
+          operation: 'happyhorseSubmit',
+          status: 'success',
+          executor: 'aliyun' as any,
+          request: {
+            prompt: draft.prompt.rawPrompt,
+            imageCount: imageSources.length,
+            ratio: project.fastFlow.input.aspectRatio,
+            duration: project.fastFlow.input.durationSec,
+            resolution: draft.options.resolution,
+          },
+          response: result,
+        });
+
+        updateFastFlowByProjectId(targetProjectId, (current) => ({
+          ...current,
+          task: {
+            ...current.task,
+            provider: 'aliyun',
+            taskId: result.submitId,
+            submitId: result.submitId,
+            status: 'queued',
+            remoteStatus: 'PENDING',
+            queueStatus: 'PENDING',
+            raw: result.raw,
+            error: '',
+            lastCheckedAt: new Date().toISOString(),
+            startedAt: current.task.startedAt || submitStartedAt,
+            finishedAt: '',
+          },
+        }));
+        setView('fastVideo');
+        await handleRefreshFastVideoTask(result.submitId, 'aliyun');
+      } else if (submitExecutor === 'ark') {
         const submitRequestLog = buildSeedanceSubmitLogRequest(draft, 'ark');
         const arkModelMeta = getSeedanceArkModelMeta(project.fastFlow.executionConfig.apiModelKey);
         const result = await createSeedanceTask(draft, project.fastFlow.executionConfig.apiModelKey);

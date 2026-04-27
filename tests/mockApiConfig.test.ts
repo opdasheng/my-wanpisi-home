@@ -50,6 +50,14 @@ test('applyMockApiSettings switches API settings to local mock endpoints and kee
       scenario: 'success',
       previousSettings: null,
     },
+    aliyun: {
+      enabled: false,
+      apiKey: '',
+      baseUrl: 'https://dashscope.aliyuncs.com/api/v1',
+      promptLanguage: 'zh',
+      fastVideoModel: 'happyhorse-1.0',
+      customModels: [],
+    },
     defaultModels: {
       text: 'gemini.textModel' as const,
       image: 'gemini.imageModel' as const,
