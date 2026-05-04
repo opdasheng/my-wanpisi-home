@@ -119,6 +119,4 @@ Ark API Key、模型 ID / Endpoint ID、提示词语言都在“API 配置”页
 
 ## 交流
 
-如有问题可以进群讨论：
 
-![Tapdance 交流群二维码](public/QRCode.JPG)
